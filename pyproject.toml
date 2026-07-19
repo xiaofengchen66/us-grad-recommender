@@ -1,0 +1,53 @@
+[project]
+name = "us-grad-recommender"
+version = "0.1.0"
+description = "US graduate school information and recommendation platform — institution index and IPEDS importer"
+requires-python = ">=3.9"
+dependencies = [
+    "sqlalchemy>=2.0",
+    "alembic>=1.13",
+    "psycopg[binary]>=3.1",
+    "python-dotenv>=1.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "ruff>=0.6",
+    "mypy>=1.10",
+]
+
+[project.scripts]
+import-ipeds = "us_grad_recommender.importers.ipeds.cli:main"
+
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py39"
+extend-exclude = ["migrations/versions"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+# UP006/UP007/UP035/UP045 push `list[X]` / `X | None` builtin-generic syntax.
+# That's unsafe here: SQLAlchemy's declarative mapper resolves `Mapped[...]`
+# annotations with a real eval() at class-definition time, which fails on
+# Python 3.9 (our floor) even under `from __future__ import annotations` —
+# confirmed directly (see models/university.py). Keep typing.Optional/List.
+ignore = ["UP006", "UP007", "UP035", "UP045"]
+
+[tool.mypy]
+python_version = "3.9"
+mypy_path = "src"
+explicit_package_bases = true
+ignore_missing_imports = true
+warn_unused_ignores = true
