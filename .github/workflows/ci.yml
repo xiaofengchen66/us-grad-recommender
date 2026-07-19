@@ -1,0 +1,66 @@
+name: CI
+
+"on":
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # 3.9 is the declared floor (pyproject.toml); 3.12 is a stand-in for
+        # a currently-supported target. Both must pass — see README's note
+        # on why 3.9 is still supported despite being past upstream EOL.
+        python-version: ["3.9", "3.12"]
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: us_grad_recommender_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      DATABASE_URL: postgresql+psycopg://postgres:postgres@localhost:5432/us_grad_recommender_ci
+      TEST_DATABASE_URL: postgresql+psycopg://postgres:postgres@localhost:5432/us_grad_recommender_ci_test
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install dependencies
+        run: python -m pip install -e ".[dev]"
+
+      - name: Create test database
+        run: PGPASSWORD=postgres psql -h localhost -U postgres -c "CREATE DATABASE us_grad_recommender_ci_test;"
+
+      - name: Lint (ruff)
+        run: ruff check .
+
+      - name: Type check (mypy)
+        run: mypy src
+
+      - name: Run migrations
+        run: alembic upgrade head
+
+      - name: Verify migration is reversible
+        run: |
+          alembic downgrade base
+          alembic upgrade head
+
+      - name: Run tests
+        run: pytest -q
