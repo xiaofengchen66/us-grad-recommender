@@ -21,10 +21,12 @@ Implemented so far:
     Carnegie importer or data source is needed).
   - `EF`, component A (fall enrollment) — total / graduate / international
     graduate enrollment counts.
+- A read-only institution search/detail API (FastAPI) — see
+  `src/us_grad_recommender/api/`.
 
-Not yet implemented: institution search/detail, program discovery, funding,
-community data ingestion, image parsing, recommendation logic. See
-`docs/FULL_HANDOFF.md` §20–21 for the roadmap.
+Not yet implemented: program discovery, funding, community data ingestion,
+image parsing, recommendation logic. See `docs/FULL_HANDOFF.md` §20–21 for
+the roadmap.
 
 ## Requirements
 
@@ -64,6 +66,21 @@ import-ipeds ef --file /path/to/ef2023a.csv --year 2023
 Both commands are idempotent: re-running with the same file is a no-op,
 and re-running with a newer year's file refreshes the data in place.
 
+## Running the API
+
+```bash
+uvicorn us_grad_recommender.api.app:app --reload
+```
+
+Interactive docs at `http://127.0.0.1:8000/docs`. Endpoints:
+
+- `GET /universities?q=&state=&sector=&masters_granting=&limit=&offset=` —
+  search by name or alias (case-insensitive substring), with optional exact
+  filters; returns `{total, limit, offset, results}`.
+- `GET /universities/{unitid}` — full detail including aliases; 404 if not
+  found.
+- `GET /healthz` — liveness check.
+
 ## Development checks
 
 Run these before opening a PR (CI runs the same checks — see
@@ -91,6 +108,7 @@ pytest -q
 src/us_grad_recommender/
   models/            SQLAlchemy models (universities, university_aliases)
   importers/ipeds/    IPEDS HD/EF parsing, mapping tables, upsert, CLI
+  api/                FastAPI app: institution search/detail (read-only)
   db.py, config.py    Engine/session setup, DATABASE_URL loading
 migrations/           Alembic migrations
 tests/                 pytest suite (Postgres-backed, transactional isolation)

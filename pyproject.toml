@@ -8,6 +8,8 @@ dependencies = [
     "alembic>=1.13",
     "psycopg[binary]>=3.1",
     "python-dotenv>=1.0",
+    "fastapi>=0.110",
+    "uvicorn>=0.29",
 ]
 
 [project.optional-dependencies]
@@ -15,6 +17,7 @@ dev = [
     "pytest>=8.0",
     "ruff>=0.6",
     "mypy>=1.10",
+    "httpx>=0.27",
 ]
 
 [project.scripts]
@@ -44,6 +47,12 @@ select = ["E", "F", "I", "UP", "B"]
 # Python 3.9 (our floor) even under `from __future__ import annotations` —
 # confirmed directly (see models/university.py). Keep typing.Optional/List.
 ignore = ["UP006", "UP007", "UP035", "UP045"]
+
+# B008 (function call in argument default) is a false positive for FastAPI's
+# Query/Depends/Path/Body — that's the framework's required, documented
+# pattern for declaring parameters, not an accidental mutable default.
+[tool.ruff.lint.flake8-bugbear]
+extend-immutable-calls = ["fastapi.Depends", "fastapi.Query", "fastapi.Path", "fastapi.Body"]
 
 [tool.mypy]
 python_version = "3.9"
