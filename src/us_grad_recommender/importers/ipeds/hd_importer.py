@@ -20,6 +20,8 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
 from us_grad_recommender.importers.ipeds.mappings import (
+    CAMPUS_SETTING_LABELS,
+    CARNEGIE_BASIC_LABELS,
     CONTROL_TO_SECTOR,
     CYACTIVE_IS_ACTIVE,
     DEGGRANT_IS_DEGREE_GRANTING,
@@ -48,6 +50,10 @@ class ParsedInstitution:
     sector: Sector
     highest_degree_level: Optional[int]
     highest_degree_label: Optional[str]
+    carnegie_classification: Optional[int]
+    carnegie_classification_label: Optional[str]
+    campus_setting: Optional[int]
+    campus_setting_label: Optional[str]
     masters_granting: bool
     masters_granting_basis: Optional[str]
     degree_granting: Optional[bool]
@@ -154,6 +160,17 @@ def parse_hd_row(row: dict) -> ParsedInstitution | RowIssue:
     hloffer = _parse_int(row.get("HLOFFER"))
     highest_degree_label = HLOFFER_LABELS.get(hloffer) if hloffer is not None else None
 
+    carnegie_classification = _parse_int(row.get("C21BASIC"))
+    carnegie_classification_label = (
+        CARNEGIE_BASIC_LABELS.get(carnegie_classification)
+        if carnegie_classification is not None
+        else None
+    )
+    campus_setting = _parse_int(row.get("C21SZSET"))
+    campus_setting_label = (
+        CAMPUS_SETTING_LABELS.get(campus_setting) if campus_setting is not None else None
+    )
+
     cyactive = _parse_int(row.get("CYACTIVE"))
     deggrant = _parse_int(row.get("DEGGRANT"))
     groffer = _parse_int(row.get("GROFFER"))
@@ -173,6 +190,10 @@ def parse_hd_row(row: dict) -> ParsedInstitution | RowIssue:
         sector=sector,
         highest_degree_level=hloffer,
         highest_degree_label=highest_degree_label,
+        carnegie_classification=carnegie_classification,
+        carnegie_classification_label=carnegie_classification_label,
+        campus_setting=campus_setting,
+        campus_setting_label=campus_setting_label,
         masters_granting=masters_granting,
         masters_granting_basis=MASTERS_GRANTING_BASIS if masters_granting else None,
         degree_granting=(deggrant == DEGGRANT_IS_DEGREE_GRANTING) if deggrant is not None else None,
@@ -208,6 +229,10 @@ def _upsert_universities(
             "sector": inst.sector,
             "highest_degree_level": inst.highest_degree_level,
             "highest_degree_label": inst.highest_degree_label,
+            "carnegie_classification": inst.carnegie_classification,
+            "carnegie_classification_label": inst.carnegie_classification_label,
+            "campus_setting": inst.campus_setting,
+            "campus_setting_label": inst.campus_setting_label,
             "masters_granting": inst.masters_granting,
             "masters_granting_basis": inst.masters_granting_basis,
             "degree_granting": inst.degree_granting,
@@ -230,6 +255,10 @@ def _upsert_universities(
         "sector",
         "highest_degree_level",
         "highest_degree_label",
+        "carnegie_classification",
+        "carnegie_classification_label",
+        "campus_setting",
+        "campus_setting_label",
         "masters_granting",
         "masters_granting_basis",
         "degree_granting",

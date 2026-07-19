@@ -78,6 +78,17 @@ class University(Base):
     highest_degree_level: Mapped[Optional[int]] = mapped_column(Integer)
     highest_degree_label: Mapped[Optional[str]] = mapped_column(String(100))
 
+    # Raw IPEDS HD.C21BASIC / HD.C21SZSET codes and labels. Note: Carnegie
+    # classifications are a time-specific snapshot (2021 update, based on
+    # 2019-20 data per ACE's own methodology docs) republished into each
+    # year's HD file — the vintage is NOT the same as ipeds_year. This is
+    # the "R1/R2" signal referenced in FULL_HANDOFF.md §4, and the source
+    # for the "Campus setting" field listed in §5.
+    carnegie_classification: Mapped[Optional[int]] = mapped_column(Integer)
+    carnegie_classification_label: Mapped[Optional[str]] = mapped_column(String(100))
+    campus_setting: Mapped[Optional[int]] = mapped_column(Integer)
+    campus_setting_label: Mapped[Optional[str]] = mapped_column(String(100))
+
     # Heuristic: HD.GROFFER == 1 AND HD.HLOFFER >= 7 AND HD.DEGGRANT == 1.
     # This is an offering-capability signal, not a confirmed program count —
     # see masters_granting_basis and FULL_HANDOFF.md §4 "R1/R2 are not enough".

@@ -15,13 +15,16 @@ Implemented so far:
   `src/us_grad_recommender/models/university.py`.
 - An idempotent importer for two IPEDS survey components:
   - `HD` (institutional characteristics) — identity, location, sector,
-    highest degree offered, a master's-granting heuristic, aliases.
+    highest degree offered, a master's-granting heuristic, aliases, and the
+    2021 Carnegie Basic Classification + Size & Setting Classification
+    (both are columns embedded directly in the HD file, so no separate
+    Carnegie importer or data source is needed).
   - `EF`, component A (fall enrollment) — total / graduate / international
     graduate enrollment counts.
 
-Not yet implemented: Carnegie classification, institution search/detail,
-program discovery, funding, community data ingestion, image parsing,
-recommendation logic. See `docs/FULL_HANDOFF.md` §20–21 for the roadmap.
+Not yet implemented: institution search/detail, program discovery, funding,
+community data ingestion, image parsing, recommendation logic. See
+`docs/FULL_HANDOFF.md` §20–21 for the roadmap.
 
 ## Requirements
 

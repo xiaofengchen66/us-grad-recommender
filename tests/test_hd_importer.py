@@ -25,6 +25,8 @@ MASTERS_ROW = {
     "GROFFER": "1",
     "DEGGRANT": "1",
     "CYACTIVE": "1",
+    "C21BASIC": "18",
+    "C21SZSET": "14",
 }
 
 BACHELORS_ONLY_ROW = {
@@ -71,6 +73,34 @@ def test_parse_hd_row_valid_masters_institution():
     assert parsed.masters_granting is True
     assert parsed.highest_degree_label == "Doctor's degree"
     assert parsed.aliases == ["AAMU"]
+    assert parsed.carnegie_classification == 18
+    assert (
+        parsed.carnegie_classification_label
+        == "Master's Colleges & Universities: Larger Programs"
+    )
+    assert parsed.campus_setting == 14
+    assert parsed.campus_setting_label == "Four-year, medium, highly residential"
+
+
+def test_parse_hd_row_carnegie_not_applicable_sentinel_has_no_label():
+    # -2 = "not applicable, not in Carnegie universe" per the HD dictionary.
+    # The raw code is preserved; only the derived label is left unset.
+    parsed = parse_hd_row(row(C21BASIC="-2", C21SZSET="-2"))
+    assert parsed.carnegie_classification == -2
+    assert parsed.carnegie_classification_label is None
+    assert parsed.campus_setting == -2
+    assert parsed.campus_setting_label is None
+
+
+def test_parse_hd_row_missing_carnegie_columns_does_not_crash():
+    incomplete_row = dict(MASTERS_ROW)
+    del incomplete_row["C21BASIC"]
+    del incomplete_row["C21SZSET"]
+    parsed = parse_hd_row(incomplete_row)
+    assert parsed.carnegie_classification is None
+    assert parsed.carnegie_classification_label is None
+    assert parsed.campus_setting is None
+    assert parsed.campus_setting_label is None
 
 
 def test_parse_hd_row_missing_unitid_is_reported_not_guessed():
@@ -113,6 +143,13 @@ def test_import_creates_masters_granting_institution(db_session):
     assert university.masters_granting is True
     assert university.ipeds_year == 2023
     assert university.last_verified_at == date(2026, 1, 1)
+    assert university.carnegie_classification == 18
+    assert (
+        university.carnegie_classification_label
+        == "Master's Colleges & Universities: Larger Programs"
+    )
+    assert university.campus_setting == 14
+    assert university.campus_setting_label == "Four-year, medium, highly residential"
 
     aliases = db_session.query(UniversityAlias).filter_by(unitid=100654).all()
     assert [a.alias for a in aliases] == ["AAMU"]
