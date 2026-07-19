@@ -36,9 +36,9 @@ jobs:
       TEST_DATABASE_URL: postgresql+psycopg://postgres:postgres@localhost:5432/us_grad_recommender_ci_test
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: ${{ matrix.python-version }}
 
