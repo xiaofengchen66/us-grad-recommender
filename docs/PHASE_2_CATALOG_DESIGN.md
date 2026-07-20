@@ -6,6 +6,12 @@ schema" and "catalog adapter framework" as a design proposal, to be
 reviewed before any scraping or migration work starts. Pilot institutions
 are proposed at the end, not crawled.
 
+**Review status (2026-07-20)**: 3 of 4 open decisions in §12 are resolved
+(simplified provenance, track-level admission requirements, no
+auto-promotion allowlist — all favoring simplicity for the pilot). PDF
+catalog handling depth remains open pending real examples. Implementation
+has not started.
+
 ## 0. Governing principle
 
 > All raw information from a school's own site is preserved in full
@@ -49,16 +55,14 @@ erDiagram
 
     evidence_sources ||--o{ source_snapshots : captured
     source_snapshots ||--o{ parsed_documents : "parsed into"
-    parsed_documents ||--o{ field_provenance : "backs"
-    field_provenance }o--|| programs : "traces (polymorphic)"
-    field_provenance }o--|| program_tracks : "traces (polymorphic)"
-    field_provenance }o--|| admission_requirements : "traces (polymorphic)"
+    source_snapshots ||--o{ programs : "last-seen source (polymorphic)"
+    source_snapshots ||--o{ program_tracks : "last-seen source (polymorphic)"
 ```
 
-(`field_provenance`'s links to `programs` / `program_tracks` /
-`admission_requirements` are polymorphic — one table, `entity_type` +
-`entity_id` — the diagram draws three edges because Mermaid can't express
-polymorphic FKs directly. See §5.)
+(`source_snapshots`' links to content tables are entity-level provenance —
+every content row's `last_seen_snapshot_id` — not a separate per-field
+ledger. See §5 for why: a full field-level `field_provenance` table was
+considered and deliberately deferred in favor of this simpler model.)
 
 ### 2.1 Core hierarchy
 
@@ -222,20 +226,6 @@ parsed_documents
   extraction_confidence
   raw_extraction         jsonb    -- the adapter's structured output, pre-review
 
-field_provenance                  -- the field-level ledger described in §0
-  id
-  entity_type            enum: program, program_track, academic_unit, admission_requirement, program_track_deadline
-  entity_id
-  field_name              text     -- e.g. "min_gpa", "application_deadline"
-  source_snapshot_id       FK
-  parsed_document_id       FK, nullable
-  raw_text
-  normalized_value          text   -- stored as text; the entity's real column holds the typed value
-  confidence
-  verification_status       -- same vocabulary as entity-level status
-  extracted_by               -- adapter name, or "human:<user_id>" for manual entry/correction
-  extracted_at
-
 data_review_tasks
   id, entity_type, entity_id, field_name (nullable — can flag a whole row)
   reason                  enum: low_confidence, first_seen, conflicts_with_existing, adapter_fallback_used, reported_by_user
@@ -249,20 +239,30 @@ data_conflicts
   status                  enum: open, resolved_kept_current, resolved_took_proposed
 ```
 
-`field_provenance` is applied selectively, not to every field of every
-table — see §4's rule of thumb. Applying it universally (true EAV) would
-be more "complete" but adds real query complexity for fields that are
-never actually ambiguous (a URL is a URL). This is a judgment call worth
-you weighing in on before implementation: the alternative is a simpler
-per-row `raw_snapshot_id` + a few `_raw_text` sibling columns on the
-tables that need them (as sketched in §2), skipping the separate
-`field_provenance` table entirely. That's less powerful (can't independently
-track confidence/verification per field) but meaningfully simpler to
-build and query. I'd lean toward starting with the simpler sibling-column
-version and only introducing full `field_provenance` if the pilot shows
-we need per-field confidence tracking that sibling columns can't give us
-— but this is exactly the kind of call worth making explicitly rather
-than defaulting silently.
+**Decided (2026-07-20): no separate `field_provenance` EAV table for now.**
+Provenance is tracked at two levels instead:
+
+1. **Entity level** — every content table's `<provenance columns>` (§2)
+   tie the whole row to `last_seen_snapshot_id` + `verification_status` +
+   `last_verified_at`. If any part of a row needs review, the row is
+   flagged, not an individual field.
+2. **Field level, but only for the specific fields that need it** — plain
+   sibling columns directly on the table, already sketched in §2:
+   `programs.raw_degree_name`, `program_tracks.min_gpa_raw`,
+   `program_track_deadlines.deadline_raw_text`,
+   `admission_requirements.raw_text`. No independent confidence/
+   verification-status per field — that metadata lives at the row level.
+
+The accepted tradeoff: if a track's GPA minimum needs re-review but its
+deadline doesn't, the whole track row shows as `needs_review`, not just
+the GPA. That's coarser than full field-level provenance, but avoids the
+EAV table's query complexity and a second join for every field read.
+`data_review_tasks`/`data_conflicts` still record `field_name` when
+useful (a reviewer should still see *which* field triggered a task), that
+metadata just isn't backed by a standing per-field ledger table. Revisit
+introducing `field_provenance` post-pilot if row-level granularity proves
+too coarse in practice — e.g. if the same row keeps bouncing in and out of
+review for unrelated fields.
 
 ---
 
@@ -331,12 +331,15 @@ rather than `program_id`: requirements are frequently degree- and
 track-specific (an MS and a PhD in the same department rarely share
 identical admission criteria), so anchoring at the track level is more
 correct even though it means near-duplicate requirement rows for programs
-whose tracks genuinely do share identical requirements. That duplication
-is an accepted, explicit tradeoff — the alternative (requirements at the
-program level with per-track overrides) adds resolution-order complexity
-for a case that may not be common enough to justify it. Worth revisiting
-after the pilot shows how often tracks actually share requirements
-verbatim.
+whose tracks genuinely do share identical requirements.
+
+**Decided (2026-07-20): track level, accepting the duplication.** The
+alternative (requirements at the program level with per-track overrides)
+adds resolution-order complexity (`COALESCE(track_value, program_value)`
+at every read) for a case that may not be common enough to justify it —
+and it cuts against keeping Phase 2 simple and controllable for the pilot,
+which was an explicit priority. Revisit after the pilot shows how often
+tracks actually share requirements verbatim.
 
 ### 7.5 Concentrations
 `program_concentrations` references `program_id` (concentrations are
@@ -400,8 +403,8 @@ from the very first pilot run, not added later.
 
 - Every automated write defaults to `verification_status = parsed` (deterministic
   adapter) or `needs_review` (LLM fallback) — never `document_verified`.
-  Nothing is presented to end users as fully trusted until a human (or a
-  sufficiently strong deterministic signal, see below) confirms it.
+  Nothing is presented to end users as fully trusted until a human confirms
+  it.
 - `data_review_tasks` is the queue. A reviewer sees: the raw text, the
   proposed normalized value, the source URL/snapshot, and (for conflicts)
   the currently stored value side by side.
@@ -409,12 +412,16 @@ from the very first pilot run, not added later.
   normalized value; raw text is never edited, only annotated as
   superseded), **reject** (→ `rejected_as_invalid`, field reverts to null
   pending re-extraction).
-- One calibrated exception to "always needs a human": high-confidence,
-  identity-like fields from a *deterministic* adapter on a *known-reliable*
-  catalog platform (e.g. a program name lifted from a CourseLeaf catalog's
-  structured listing) can be auto-promoted past `needs_review` — but this
-  should be an explicit, narrow allowlist decided after the pilot shows
-  which fields are actually reliable, not a default.
+- **Decided (2026-07-20): no auto-promotion allowlist, for any adapter, for
+  now.** Every automated extraction — deterministic adapter or LLM
+  fallback alike — goes through `data_review_tasks` before it can reach
+  `user_confirmed`/`document_verified`. The rationale: this project's core
+  credibility promise depends on the data being trustworthy, and there's
+  no pilot evidence yet about which adapters/fields are actually reliable
+  enough to skip review safely — deciding an allowlist now would be
+  guessing. Revisit once the pilot produces real confidence-calibration
+  data (e.g. "CourseLeaf program names were correct in 200/200 manual
+  spot-checks").
 - This mirrors `FULL_HANDOFF.md` §15's evidence levels and §17's
   requirement to show "evidence confidence" separately from "model
   confidence" on the eventual recommendation card — the schema here is
@@ -473,18 +480,36 @@ downloaded files rather than assumed field names.
 
 ---
 
-## 12. Open decisions worth your input before implementation
+## 12. Design decisions — status as of 2026-07-20
 
-1. **Field-level provenance**: full `field_provenance` EAV table (§5) vs.
-   simpler per-row `raw_*` sibling columns. Recommendation: start simple,
-   upgrade if the pilot shows a real need.
-2. **`admission_requirements` at track level** (§7.4): accepts some
-   duplication for tracks with identical requirements. Alternative:
-   program-level with track overrides — more normalized, more complex.
-3. **Auto-promotion allowlist** (§9): whether *any* automated extraction
-   should ever skip human review, even for high-confidence deterministic
-   adapters on reliable platforms.
-4. **PDF catalog handling depth**: OCR quality and PDF structure vary
-   wildly; worth deciding up front how much effort `PdfCatalogAdapter` is
-   expected to handle before falling back to `LLMFallbackAdapter` or a
-   manual-entry path.
+1. **Field-level provenance** (§5): **decided — simplified.** No separate
+   `field_provenance` EAV table. Entity-level `last_seen_snapshot_id` +
+   `verification_status` on every content row, plus plain `raw_*` sibling
+   columns on the specific fields that need them. Revisit only if the
+   pilot shows row-level granularity is too coarse.
+2. **`admission_requirements` at track level** (§7.4): **decided — track
+   level**, accepting some duplication for tracks with identical
+   requirements, in exchange for no override-resolution logic. Revisit
+   after the pilot shows how often tracks actually share requirements
+   verbatim.
+3. **Auto-promotion allowlist** (§9): **decided — no allowlist.** Every
+   automated extraction, deterministic or LLM, goes through
+   `data_review_tasks` before being trusted. Revisit once the pilot
+   produces real per-adapter/per-field confidence-calibration data.
+4. **PDF catalog handling depth**: **still open, deliberately deferred —
+   not decided blind.** We don't yet have a real PDF-catalog example to
+   look at (§11 flagged this rather than guessing one). Proposed bounded
+   default, to be confirmed once the pilot identifies actual candidates:
+   `PdfCatalogAdapter` attempts text-layer extraction only (e.g. via
+   `pdfplumber`/`pypdf`); if the PDF has a usable text layer, the
+   extracted text flows into the same deterministic-parse-then-
+   `LLMFallbackAdapter` pipeline as HTML sources; if there's no usable
+   text layer (a scanned image), the page is routed directly to a
+   manual-entry `data_review_task` rather than investing in an OCR
+   pipeline for Phase 2. This keeps scope bounded without pretending to
+   know PDF quality we haven't seen yet.
+
+All three resolved decisions above favor simplicity and controllability
+for the pilot over up-front generality — consistent with the explicit
+priority to keep Phase 2's first implementation small and revisit each
+one with real pilot evidence rather than up front.
