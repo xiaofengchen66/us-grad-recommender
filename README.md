@@ -23,10 +23,19 @@ Implemented so far:
     graduate enrollment counts.
 - A read-only institution search/detail API (FastAPI) — see
   `src/us_grad_recommender/api/`.
+- Program/catalog schema (Phase 2.1 — schema only, no crawler yet): see
+  `src/us_grad_recommender/models/catalog.py` and
+  `docs/PHASE_2_CATALOG_DESIGN.md`. `academic_units`, `degree_types`,
+  `programs`, `program_aliases`, `program_tracks`,
+  `program_track_deadlines`, `program_concentrations`,
+  `admission_requirements`, `evidence_sources`, `source_snapshots` — all
+  currently empty; nothing populates them until Phase 2.2 (catalog adapter
+  framework) and Phase 2.3 (pilot).
 
-Not yet implemented: program discovery, funding, community data ingestion,
-image parsing, recommendation logic. See `docs/FULL_HANDOFF.md` §20–21 for
-the roadmap.
+Not yet implemented: catalog adapters/crawling, funding, community data
+ingestion, image parsing, recommendation logic. See
+`docs/FULL_HANDOFF.md` §20–21 and `docs/PHASE_2_CATALOG_DESIGN.md` for the
+roadmap.
 
 ## Requirements
 
@@ -106,7 +115,9 @@ pytest -q
 
 ```
 src/us_grad_recommender/
-  models/            SQLAlchemy models (universities, university_aliases)
+  models/            SQLAlchemy models: university.py (institution index),
+                      catalog.py (program/catalog schema, Phase 2.1),
+                      common.py (shared provenance enums)
   importers/ipeds/    IPEDS HD/EF parsing, mapping tables, upsert, CLI
   api/                FastAPI app: institution search/detail (read-only)
   db.py, config.py    Engine/session setup, DATABASE_URL loading
