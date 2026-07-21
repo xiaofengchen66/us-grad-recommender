@@ -1,0 +1,142 @@
+name: Automated PR Review
+
+# Phase 1 of the automated review loop (see docs/AUTOMATED_REVIEW_LOOP.md).
+# This workflow is strictly review-only: it reads the PR diff and this
+# project's review-scoping docs, then posts exactly one structured comment.
+# It must never edit files, commit, push, approve, or merge — see the
+# security boundaries section of docs/AUTOMATED_REVIEW_LOOP.md for how that
+# is enforced (tool allowlisting + no merge-capable step existing at all,
+# not just prompt wording).
+
+"on":
+  pull_request:
+    types: [opened, reopened, synchronize, ready_for_review]
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: "PR number to force a fresh review of (bypasses the already-reviewed check)"
+        required: true
+        type: number
+
+concurrency:
+  group: pr-review-${{ github.event.pull_request.number || inputs.pr_number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pull-requests: write
+  id-token: write
+
+jobs:
+  review:
+    if: github.event_name == 'workflow_dispatch' || github.event.pull_request.draft == false
+    runs-on: ubuntu-latest
+    steps:
+      - name: Resolve PR number and head SHA
+        id: pr
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            PR_NUMBER="${{ inputs.pr_number }}"
+            HEAD_SHA=$(gh pr view "$PR_NUMBER" --repo "$REPO" --json headRefOid --jq '.headRefOid')
+            FORCE=true
+          else
+            PR_NUMBER="${{ github.event.pull_request.number }}"
+            HEAD_SHA="${{ github.event.pull_request.head.sha }}"
+            FORCE=false
+          fi
+          echo "number=$PR_NUMBER" >> "$GITHUB_OUTPUT"
+          echo "sha=$HEAD_SHA" >> "$GITHUB_OUTPUT"
+          echo "force=$FORCE" >> "$GITHUB_OUTPUT"
+
+      # Cheap idempotency check, run before anything that costs Claude API
+      # tokens: has this exact head commit already been reviewed? Every
+      # review comment this workflow posts carries a
+      # "automated-review-bot sha=<head-sha>" marker (see the prompt below),
+      # so a plain text search over existing comments is enough — no state
+      # needs to be stored anywhere else.
+      - name: Check if this commit was already reviewed
+        id: check
+        if: steps.pr.outputs.force != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ steps.pr.outputs.number }}
+          MARKER: "automated-review-bot sha=${{ steps.pr.outputs.sha }}"
+        run: |
+          if gh api "repos/$REPO/issues/$PR_NUMBER/comments" --paginate --jq '.[].body' \
+              | grep -qF "$MARKER"; then
+            echo "already_reviewed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "already_reviewed=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/checkout@v7
+        if: steps.pr.outputs.force == 'true' || steps.check.outputs.already_reviewed != 'true'
+        with:
+          fetch-depth: 1
+
+      - name: Run Claude Code review
+        if: steps.pr.outputs.force == 'true' || steps.check.outputs.already_reviewed != 'true'
+        uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          prompt: |
+            REPO: ${{ github.repository }}
+            PR NUMBER: ${{ steps.pr.outputs.number }}
+            HEAD SHA: ${{ steps.pr.outputs.sha }}
+
+            You are the independent project reviewer for this repository,
+            running as an automated check — there is no human in this loop
+            for this step. Before doing anything else, read these three
+            files in full:
+              - docs/FULL_HANDOFF.md
+              - docs/REVIEW_AGENT_PROMPT.md
+              - docs/PHASE_2_CATALOG_DESIGN.md
+
+            Then review this pull request's diff against `main`, using
+            `gh pr diff ${{ steps.pr.outputs.number }}` and
+            `gh pr view ${{ steps.pr.outputs.number }}` to see the changes
+            and PR description. Check strictly against what
+            docs/REVIEW_AGENT_PROMPT.md specifies: product-spec violations,
+            institution facts applied to programs incorrectly, PhD funding
+            applied to master's students, international-eligibility
+            mistakes, missing provenance/verification dates, false
+            precision, incorrect five-cycle logic, survivorship bias,
+            missing rejection/no-funding outcomes, incorrect portfolio
+            constraints, admission safety confused with funding safety,
+            privacy/consent issues, unsafe scraping assumptions, migration
+            risks, missing tests, broken type contracts, hallucinated data.
+
+            You are strictly read-only. Do not edit, create, or delete any
+            file. Do not run `git commit`, `git push`, `gh pr merge`, or
+            `gh pr review --approve` — these tools are not available to you
+            and must not be attempted. Your only allowed output is a single
+            PR comment.
+
+            Post exactly ONE comment via
+            `gh pr comment ${{ steps.pr.outputs.number }} --body "..."`.
+            The comment body must be exactly this structure — real findings
+            (or the literal word "None") under every heading, and every
+            finding citing a specific file and line:
+
+            <!-- automated-review-bot sha=${{ steps.pr.outputs.sha }} -->
+            REVIEW_RESULT: BLOCK | READY_AFTER_FIXES | READY_TO_MERGE
+
+            BLOCKING:
+            HIGH:
+            MEDIUM:
+            TEST_GAPS:
+            OPTIONAL:
+
+            Choose exactly one REVIEW_RESULT value:
+            - BLOCK if there are any BLOCKING findings
+            - READY_AFTER_FIXES if there are HIGH or MEDIUM findings but no
+              BLOCKING ones
+            - READY_TO_MERGE only if there are no BLOCKING, HIGH, or MEDIUM
+              findings (TEST_GAPS/OPTIONAL notes don't block this)
+
+          claude_args: |
+            --allowedTools "Read,Grep,Glob,Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh pr comment:*)"
