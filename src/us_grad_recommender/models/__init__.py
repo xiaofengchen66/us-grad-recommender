@@ -20,6 +20,15 @@ from us_grad_recommender.models.catalog import (
     UnitType,
 )
 from us_grad_recommender.models.common import EntityStatus, VerificationStatus
+from us_grad_recommender.models.review import (
+    CatalogEntityType,
+    ConflictStatus,
+    DataConflict,
+    DataReviewTask,
+    ParsedDocument,
+    ReviewReason,
+    ReviewTaskStatus,
+)
 from us_grad_recommender.models.university import (
     AliasType,
     CoverageTier,
@@ -55,4 +64,11 @@ __all__ = [
     "EvidenceSource",
     "SourceType",
     "SourceSnapshot",
+    "CatalogEntityType",
+    "ReviewReason",
+    "ReviewTaskStatus",
+    "ConflictStatus",
+    "ParsedDocument",
+    "DataReviewTask",
+    "DataConflict",
 ]

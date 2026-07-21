@@ -28,14 +28,20 @@ Implemented so far:
   `docs/PHASE_2_CATALOG_DESIGN.md`. `academic_units`, `degree_types`,
   `programs`, `program_aliases`, `program_tracks`,
   `program_track_deadlines`, `program_concentrations`,
-  `admission_requirements`, `evidence_sources`, `source_snapshots` — all
-  currently empty; nothing populates them until Phase 2.2 (catalog adapter
-  framework) and Phase 2.3 (pilot).
+  `admission_requirements`, `evidence_sources`, `source_snapshots`.
+- Review/provenance pipeline schema (Phase 2.2A — schema only): see
+  `src/us_grad_recommender/models/review.py`. `parsed_documents`,
+  `data_review_tasks`, `data_conflicts`.
 
-Not yet implemented: catalog adapters/crawling, funding, community data
-ingestion, image parsing, recommendation logic. See
-`docs/FULL_HANDOFF.md` §20–21 and `docs/PHASE_2_CATALOG_DESIGN.md` for the
-roadmap.
+All of the above are currently empty; nothing populates them until the
+adapter framework and parser pipeline are built (Phase 2.2B+) and the
+pilot runs (Phase 2.3).
+
+Not yet implemented: catalog adapters, parser pipeline, HTML/PDF parsing,
+network fetching, a review UI, automatic verification-status transitions,
+funding, community data ingestion, image parsing, recommendation logic.
+See `docs/FULL_HANDOFF.md` §20–21 and `docs/PHASE_2_CATALOG_DESIGN.md` for
+the roadmap.
 
 ## Requirements
 
@@ -117,6 +123,7 @@ pytest -q
 src/us_grad_recommender/
   models/            SQLAlchemy models: university.py (institution index),
                       catalog.py (program/catalog schema, Phase 2.1),
+                      review.py (review/provenance pipeline, Phase 2.2A),
                       common.py (shared provenance enums)
   importers/ipeds/    IPEDS HD/EF parsing, mapping tables, upsert, CLI
   api/                FastAPI app: institution search/detail (read-only)
