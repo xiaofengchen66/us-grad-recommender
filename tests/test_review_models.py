@@ -129,6 +129,9 @@ def test_parsed_document_snapshot_set_null_on_delete(db_session, snapshot):
 
     doc = db_session.get(ParsedDocument, doc.id)
     assert doc.source_snapshot_id is None
+    # extraction_confidence was never provided — confirm the nullable column
+    # actually stores None rather than some adapter-supplied default.
+    assert doc.extraction_confidence is None
 
 
 # --- DataReviewTask ------------------------------------------------------
@@ -166,6 +169,65 @@ def test_data_review_task_can_flag_a_specific_field(db_session, program):
     assert task.field_name == "canonical_name"
     assert task.reason == ReviewReason.POSSIBLE_DUPLICATE
     assert task.status == ReviewTaskStatus.IN_REVIEW
+
+
+@pytest.mark.parametrize("terminal_status", [ReviewTaskStatus.RESOLVED, ReviewTaskStatus.DISMISSED])
+def test_data_review_task_terminal_states_set_resolved_at(db_session, program, terminal_status):
+    # Both RESOLVED and DISMISSED are terminal states for a task — resolved_at
+    # marks "stopped being active," not specifically "fixed." See the
+    # resolved_at doc comment on DataReviewTask.
+    now = datetime(2026, 7, 21, tzinfo=timezone.utc)
+    task = DataReviewTask(
+        entity_type=CatalogEntityType.PROGRAM,
+        entity_id=program.id,
+        reason=ReviewReason.LOW_CONFIDENCE,
+        status=terminal_status,
+        resolved_at=now,
+    )
+    db_session.add(task)
+    db_session.commit()
+    db_session.expire_all()
+
+    task = db_session.get(DataReviewTask, task.id)
+    assert task.status == terminal_status
+    assert task.resolved_at == now
+
+
+def test_data_review_task_updated_at_changes_on_update(db_session, program):
+    task = DataReviewTask(
+        entity_type=CatalogEntityType.PROGRAM,
+        entity_id=program.id,
+        reason=ReviewReason.LOW_CONFIDENCE,
+    )
+    db_session.add(task)
+    db_session.commit()
+    first_updated_at = task.updated_at
+
+    task.status = ReviewTaskStatus.IN_REVIEW
+    db_session.commit()
+    db_session.expire_all()
+
+    task = db_session.get(DataReviewTask, task.id)
+    assert task.updated_at >= first_updated_at
+
+
+def test_data_review_task_entity_id_has_no_real_fk(db_session):
+    # Intentional per docs/PHASE_2_CATALOG_DESIGN.md §5: entity_type +
+    # entity_id is a polymorphic reference, so the database cannot enforce
+    # that entity_id actually points at an existing row of that type. This
+    # test documents that permissiveness as deliberate, not an oversight —
+    # a future "fix" adding a real FK here would be incorrect.
+    task = DataReviewTask(
+        entity_type=CatalogEntityType.PROGRAM,
+        entity_id=999999,  # no Program with this id exists
+        reason=ReviewReason.FIRST_SEEN,
+    )
+    db_session.add(task)
+    db_session.commit()  # does not raise
+
+    db_session.expire_all()
+    task = db_session.get(DataReviewTask, task.id)
+    assert task.entity_id == 999999
 
 
 # --- DataConflict --------------------------------------------------------
@@ -233,3 +295,24 @@ def test_data_conflict_resolution_status(db_session, program, snapshot):
     conflict = db_session.get(DataConflict, conflict.id)
     assert conflict.status == ConflictStatus.RESOLVED_KEPT_CURRENT
     assert conflict.resolved_at is not None
+
+
+def test_data_conflict_updated_at_changes_on_update(db_session, program, snapshot):
+    conflict = DataConflict(
+        entity_type=CatalogEntityType.PROGRAM,
+        entity_id=program.id,
+        field_name="canonical_name",
+        current_verification_status=VerificationStatus.RAW,
+        proposed_value="Computer Sciences",
+        proposed_source_snapshot_id=snapshot.id,
+    )
+    db_session.add(conflict)
+    db_session.commit()
+    first_updated_at = conflict.updated_at
+
+    conflict.status = ConflictStatus.RESOLVED_TOOK_PROPOSED
+    db_session.commit()
+    db_session.expire_all()
+
+    conflict = db_session.get(DataConflict, conflict.id)
+    assert conflict.updated_at >= first_updated_at

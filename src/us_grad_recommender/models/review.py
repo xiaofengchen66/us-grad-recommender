@@ -124,9 +124,16 @@ class DataReviewTask(Base):
         index=True,
     )
     assigned_to: Mapped[Optional[str]] = mapped_column(String(255))
+    # Populated when status becomes RESOLVED *or* DISMISSED — both are
+    # terminal states for a task (it stops being open/in_review either way),
+    # so this marks "when did this task stop being active," not specifically
+    # "when was it resolved with a fix applied."
     resolved_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
 
     def __repr__(self) -> str:  # pragma: no cover
         return f"DataReviewTask(id={self.id!r}, entity_type={self.entity_type!r})"
@@ -167,6 +174,9 @@ class DataConflict(Base):
     )
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
     resolved_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
 
     proposed_source_snapshot: Mapped[Optional[SourceSnapshot]] = relationship()

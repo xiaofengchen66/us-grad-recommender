@@ -31,6 +31,7 @@ def upgrade() -> None:
     sa.Column('assigned_to', sa.String(length=255), nullable=True),
     sa.Column('resolved_at', sa.DateTime(timezone=True), nullable=True),
     sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=False),
+    sa.Column('updated_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=False),
     sa.PrimaryKeyConstraint('id')
     )
     op.create_index('ix_data_review_tasks_entity', 'data_review_tasks', ['entity_type', 'entity_id'], unique=False)
@@ -46,6 +47,7 @@ def upgrade() -> None:
     sa.Column('proposed_source_snapshot_id', sa.Integer(), nullable=True),
     sa.Column('status', sa.Enum('OPEN', 'RESOLVED_KEPT_CURRENT', 'RESOLVED_TOOK_PROPOSED', name='conflict_status'), nullable=False),
     sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=False),
+    sa.Column('updated_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=False),
     sa.Column('resolved_at', sa.DateTime(timezone=True), nullable=True),
     sa.ForeignKeyConstraint(['proposed_source_snapshot_id'], ['source_snapshots.id'], ondelete='SET NULL'),
     sa.PrimaryKeyConstraint('id')
