@@ -189,13 +189,26 @@ Restated from the design discussion, now as implemented:
 
 ## 7. How to rerun a review
 
-GitHub's native "Re-run jobs" button will **not** produce a fresh review
-of an unchanged commit — it re-runs the same job, which re-checks the
-same marker for the same SHA, and skips again by design.
+This depends on whether a review comment was actually posted for the
+current head SHA:
 
-To force one: **Actions tab → "Automated PR Review" → "Run workflow" →
-enter the PR number**. This uses the `workflow_dispatch` trigger, which
-always bypasses the already-reviewed check.
+- **A comment was already posted** for this exact SHA: GitHub's native
+  "Re-run jobs" button will **not** produce a fresh review — it re-runs
+  the same job, which re-checks the same marker, finds it, and skips
+  again by design.
+- **No comment was posted** (the prior run errored or was skipped before
+  reaching the comment step — e.g. a missing prerequisite, or the
+  workflow-validation skip in §8): native "Re-run jobs" **works fine**,
+  since the marker check finds nothing to skip for. This is exactly what
+  happened in practice on 2026-07-28 — re-running a failed run after
+  fixing its root cause produced a normal fresh attempt, no
+  `workflow_dispatch` needed.
+
+To force a fresh review regardless of which case applies (including
+overriding an already-posted comment): **Actions tab → "Automated PR
+Review" → "Run workflow" → enter the PR number**. This uses the
+`workflow_dispatch` trigger, which always bypasses the already-reviewed
+check.
 
 (Pushing a new commit, even a trivial one, also triggers a fresh review
 naturally via `synchronize` — no special action needed for that case.)
