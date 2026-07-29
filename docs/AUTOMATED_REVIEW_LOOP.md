@@ -202,7 +202,46 @@ naturally via `synchronize` — no special action needed for that case.)
 
 ---
 
-## 8. Phase 2 (proposed — not implemented)
+## 8. Known limitation: cannot fully self-validate before merge
+
+**Empirically observed** (2026-07-28, re-running workflow run `29852001882`
+on the PR that introduced this workflow, after the GitHub App and
+`ANTHROPIC_API_KEY` were both correctly configured): the run's GitHub App
+authentication succeeded, but `claude-code-action` then refused to execute
+and posted no comment. The actual log:
+
+```
+Attempt 1 failed: Workflow validation failed. The workflow file must exist
+and have identical content to the version on the repository's default
+branch. If you're seeing this on a PR when you first add a code review
+workflow file to your repository, this is normal and you should ignore
+this error.
+
+Action skipped due to workflow validation error. This is expected when
+adding Claude Code workflows to new repositories or on PRs with workflow
+changes. If you're seeing this, your workflow will begin working once you
+merge your PR.
+```
+
+This is a deliberate security check in `claude-code-action`, not a bug in
+this workflow or a misconfiguration: it refuses to run with the GitHub
+App's (broader — see §3) permissions unless the workflow file being
+executed is byte-identical to the version already on the repository's
+default branch. Otherwise a PR could modify the workflow itself and run
+its own version with the App's elevated access — exactly the class of
+"pwn request" attack GitHub's own docs warn about (§5).
+
+**Practical consequence**: this workflow cannot be end-to-end tested
+against the very PR that adds or modifies it. Everything short of the
+actual Claude Code review step can be verified pre-merge (App auth
+succeeding, as it did here, confirms the App is installed and credentials
+are wired correctly), but the first real structured review comment will
+only be produced once this file matches `main` — i.e., after this PR
+merges, on whatever PR is reviewed next.
+
+---
+
+## 9. Phase 2 (proposed — not implemented)
 
 A separate repair workflow, triggered once a human marks specific
 Phase-1 findings as accepted (exact trigger mechanism — e.g. a specific PR
