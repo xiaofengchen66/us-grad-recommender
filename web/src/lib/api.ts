@@ -5,7 +5,11 @@
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000";
 
-export type Sector = "public" | "private_nonprofit" | "private_for_profit";
+export type Sector =
+  | "public"
+  | "private_nonprofit"
+  | "private_for_profit"
+  | "unknown";
 
 export type CoverageTier =
   | "INDEXED"

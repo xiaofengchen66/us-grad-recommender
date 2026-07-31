@@ -13,6 +13,7 @@ const SECTORS: { value: Sector | ""; label: string }[] = [
   { value: "public", label: "Public" },
   { value: "private_nonprofit", label: "Private nonprofit" },
   { value: "private_for_profit", label: "Private for-profit" },
+  { value: "unknown", label: "Unknown" },
 ];
 
 export default function Home() {

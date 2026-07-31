@@ -94,7 +94,7 @@ export default async function UniversityPage({
 
         <div className="mt-6 rounded-md bg-amber-50 px-4 py-3 text-xs text-amber-800">
           <p className="font-medium">Master&apos;s-granting: {u.masters_granting ? "yes" : "no"}</p>
-          <p className="mt-1">{u.masters_granting_basis}</p>
+          {u.masters_granting_basis && <p className="mt-1">{u.masters_granting_basis}</p>}
         </div>
 
         <p className="mt-4 text-xs text-neutral-400">

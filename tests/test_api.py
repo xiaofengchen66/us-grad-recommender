@@ -162,3 +162,13 @@ def test_get_university_detail(client, seeded):
 def test_get_university_not_found(client, seeded):
     response = client.get("/universities/1")
     assert response.status_code == 404
+
+
+def test_cors_allows_frontend_dev_origin(client):
+    response = client.get("/healthz", headers={"Origin": "http://localhost:3000"})
+    assert response.headers["access-control-allow-origin"] == "http://localhost:3000"
+
+
+def test_cors_rejects_other_origins(client):
+    response = client.get("/healthz", headers={"Origin": "https://evil.example"})
+    assert "access-control-allow-origin" not in response.headers
