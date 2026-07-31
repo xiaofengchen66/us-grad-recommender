@@ -799,22 +799,29 @@ downloaded files rather than assumed field names.
 
 ### 13.1 Pilot scoping results (2026-07-31)
 
-Eight real catalog/program pages were inspected directly (HTTP fetch with a
-browser-like User-Agent, then grepped for vendor markup — not guessed from
-vendor marketing pages):
+Nine institutions (ten pages — Georgia Tech OMSCS needed two URLs) were
+inspected directly: an HTTP fetch with a browser-like User-Agent, then
+grepped for vendor markup — not guessed from vendor marketing pages. Every
+row below was independently fetched, not inferred from another row's
+result. Raw command output (HTTP status, matched lines, headers, robots.txt
+body) is committed at
+[`docs/evidence/phase-2.2b-pilot-scoping-2026-07-31.md`](evidence/phase-2.2b-pilot-scoping-2026-07-31.md)
+so these claims are checkable rather than taken on prose alone — consistent
+with §0's raw-evidence-next-to-normalized-value principle, even though this
+is manual pilot scoping and not yet going through `source_snapshots`.
 
 | Institution | Page checked | Result |
 |---|---|---|
 | UT Austin | `catalog.utexas.edu` | **CourseLeaf** — confirmed via `/css/courseleaf.css`, `/js/courseleaf.js`. HTTP 200, fetches cleanly. |
-| University of Alaska Fairbanks | `catalog.uaf.edu/masters/` | **CourseLeaf** — same signature. HTTP 200, fetches cleanly. |
-| Georgia Tech (general catalog) | `catalog.gatech.edu` | **CourseLeaf** — same signature. HTTP 200, fetches cleanly. |
-| UC Davis | `catalog.ucdavis.edu` | **CourseLeaf** — same signature. |
-| UIUC | `catalog.illinois.edu/graduate/` | **CourseLeaf** — same signature. |
-| MIT | `catalog.mit.edu` | **CourseLeaf** — same signature. |
-| University of New Haven | `catalog.newhaven.edu/content.php?...` (branded "Modern Campus Catalog™" in search results; `content.php?catoid=&navoid=` URL shape matches the Acalog/Modern Campus family) | **Modern Campus/Acalog family, but blocked at fetch time** — direct HTTPS GET returns `202 Accepted`, empty body, header `x-amzn-waf-action: challenge`. This is an AWS WAF bot-challenge, not a normal auth wall. |
-| Alabama A&M University | `aamu.edu/academics/catalogs/graduate-catalog.html` | **PDF-only** — no browsable HTML catalog exists at all; the page is a list of yearly PDF downloads (2009–2027). |
+| University of Alaska Fairbanks | `catalog.uaf.edu/masters/` | **CourseLeaf** — same signature, independently fetched. HTTP 200, fetches cleanly. |
+| Georgia Tech (general catalog) | `catalog.gatech.edu` | **CourseLeaf** — same signature, independently fetched. HTTP 200, fetches cleanly. |
+| UC Davis | `catalog.ucdavis.edu` | **CourseLeaf** — same signature, independently fetched. HTTP 200, fetches cleanly. |
+| UIUC | `catalog.illinois.edu/graduate/` | **CourseLeaf** — same signature, independently fetched. HTTP 200, fetches cleanly. |
+| MIT | `catalog.mit.edu` | **CourseLeaf** — same signature, independently fetched. HTTP 200, fetches cleanly. |
+| University of New Haven | `catalog.newhaven.edu/content.php?...` (branded "Modern Campus Catalog™" in search results; `content.php?catoid=&navoid=` URL shape matches the Acalog/Modern Campus family) | **Modern Campus/Acalog family, but blocked at fetch time** — direct HTTPS GET returns `202 Accepted`, empty body, header `x-amzn-waf-action: challenge`. This is an AWS WAF bot-challenge, not a robots.txt exclusion — the site's own `robots.txt` does not disallow `/content.php`, it just sets `crawl-delay: 120` for unnamed agents (see evidence log). |
+| Alabama A&M University | `aamu.edu/academics/catalogs/graduate-catalog.html` | **PDF-only** — no browsable HTML catalog exists at all; the page is a list of yearly PDF downloads (2009–2027), confirmed by name-matching each listed link. |
 | Stanford | `bulletin.stanford.edu` | **Coursedog** — a third, structurally different vendor: a client-rendered Nuxt/Vue single-page app (`app.coursedog.com`), not server-rendered HTML. Page content ships as an embedded `__NUXT_DATA__` JSON blob rather than markup, so a naive HTML-text adapter would see nothing. |
-| Georgia Tech OMSCS (program microsite, not the general catalog) | `omscs.gatech.edu/admission-criteria`, `.../prospective-student-faqs` | Plain custom HTML, not any catalog vendor. Confirms a real §8 online/visa-eligibility case in the institution's own words: *"International students applying to OMSCS are not offered visas, so they do not qualify for OPT."* / *"Georgia Tech will not support visas for OMSCS students. International students do not require U.S. residency to enroll in OMSCS."* |
+| Georgia Tech OMSCS (program microsite, not the general catalog) | `omscs.gatech.edu/admission-criteria`, `.../prospective-student-faqs` | Plain custom HTML, not any catalog vendor — two URLs fetched independently. Confirms a real §8 online/visa-eligibility case in the institution's own words: *"International students applying to OMSCS are not offered visas, so they do not qualify for OPT."* / *"Georgia Tech will not support visas for OMSCS students. International students do not require U.S. residency to enroll in OMSCS."* |
 
 **Finding that revises the table above**: the "large R1" vs.
 "higher-not-highest research" split was assumed to also give CMS
@@ -854,7 +861,12 @@ master's-focused, JS-SPA elite private), not research-activity tier.
 
 **Dropped from the original candidate list**: UAF, UC Davis, UIUC, MIT
 (all CMS-redundant with UT Austin per the finding above — kept as evidence
-in the table, not re-visited as separate pilot targets).
+in the table, not re-visited as separate pilot targets). This is a
+deduplication at the adapter-engineering level, not a deprioritization of
+the product mission: `FULL_HANDOFF.md` §2 names UAF by name as a flagship
+"overlooked institution" example, and a `CourseLeafAdapter` validated
+against UT Austin is expected to parse UAF's catalog "for free" once it
+exists, precisely because both run the same underlying platform.
 
 This is still design/validation only — no adapter code and no scheduled
 crawling exist yet as a result of this research.
