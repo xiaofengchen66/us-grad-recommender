@@ -2,6 +2,20 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getUniversity } from "@/lib/api";
 
+// `website` is sourced from the trusted, admin-run IPEDS import today, but
+// a future catalog-adapter-scraped source (docs/PHASE_2_CATALOG_DESIGN.md)
+// would be less trustworthy — reject anything that isn't http(s) rather
+// than assuming a bare string is always a safe href (e.g. `javascript:`).
+function safeWebsiteHref(website: string): string | null {
+  const withScheme = /^https?:\/\//i.test(website) ? website : `https://${website}`;
+  try {
+    const url = new URL(withScheme);
+    return url.protocol === "http:" || url.protocol === "https:" ? url.toString() : null;
+  } catch {
+    return null;
+  }
+}
+
 function Field({ label, value }: { label: string; value: React.ReactNode }) {
   if (value === null || value === undefined || value === "") return null;
   return (
@@ -26,6 +40,8 @@ export default async function UniversityPage({
   const u = await getUniversity(id);
   if (!u) notFound();
 
+  const websiteHref = u.website ? safeWebsiteHref(u.website) : null;
+
   return (
     <div className="min-h-screen bg-neutral-50 text-neutral-900">
       <main className="mx-auto max-w-2xl px-6 py-12">
@@ -44,16 +60,18 @@ export default async function UniversityPage({
           {u.website && (
             <>
               {" · "}
-              <a
-                href={
-                  u.website.startsWith("http") ? u.website : `https://${u.website}`
-                }
-                target="_blank"
-                rel="noopener noreferrer"
-                className="underline hover:text-neutral-900"
-              >
-                {u.website}
-              </a>
+              {websiteHref ? (
+                <a
+                  href={websiteHref}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="underline hover:text-neutral-900"
+                >
+                  {u.website}
+                </a>
+              ) : (
+                u.website
+              )}
             </>
           )}
         </p>
