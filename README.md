@@ -32,8 +32,11 @@ Implemented so far:
 - Review/provenance pipeline schema (Phase 2.2A — schema only): see
   `src/us_grad_recommender/models/review.py`. `parsed_documents`,
   `data_review_tasks`, `data_conflicts`.
+- A minimal read-only frontend (`web/`) — institution search + detail
+  pages over the API above. No program/funding/recommendation UI; see
+  "Running the frontend" below.
 
-All of the above are currently empty; nothing populates them until the
+All of the schema/data items above are currently empty; nothing populates them until the
 adapter framework and parser pipeline are built (Phase 2.2B+) and the
 pilot runs (Phase 2.3).
 
@@ -96,6 +99,27 @@ Interactive docs at `http://127.0.0.1:8000/docs`. Endpoints:
   found.
 - `GET /healthz` — liveness check.
 
+CORS is enabled for `http://localhost:3000` / `http://127.0.0.1:3000` (the
+Next.js dev server default) so `web/` can call this API directly in local
+dev.
+
+## Running the frontend
+
+A minimal read-only frontend (`web/`, Next.js + TypeScript + Tailwind) over
+the institution search/detail API — search box + institution detail page.
+No program/funding/outcome UI exists yet; this only surfaces what Phase 1
+(the institution index) actually has.
+
+```bash
+cd web
+npm install
+cp .env.local.example .env.local   # points at http://localhost:8000 by default
+npm run dev
+```
+
+Requires the API (above) to be running separately. Open
+`http://localhost:3000`.
+
 ## Development checks
 
 Run these before opening a PR (CI runs the same checks — see
@@ -131,4 +155,6 @@ src/us_grad_recommender/
 migrations/           Alembic migrations
 tests/                 pytest suite (Postgres-backed, transactional isolation)
 docs/                  Product handoff and agent prompts
+web/                   Next.js frontend — institution search/detail UI only
+                       (see "Running the frontend" above)
 ```
