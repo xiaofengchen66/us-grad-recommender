@@ -69,7 +69,7 @@ export default async function UniversityPage({
           <Field
             label="Total enrollment"
             value={
-              u.total_enrollment
+              u.total_enrollment != null
                 ? `${u.total_enrollment.toLocaleString()} (${u.enrollment_year})`
                 : null
             }

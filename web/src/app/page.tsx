@@ -33,7 +33,11 @@ export default function Home() {
       try {
         const res = await searchUniversities({
           q: q || undefined,
-          state: state || undefined,
+          // Backend requires exactly 2 chars (routes.py min_length=max_length=2);
+          // a partial entry is silently dropped from the query rather than
+          // sent as an invalid param that would 422 and surface as a
+          // misleading "can't reach the API" error.
+          state: state.length === 2 ? state : undefined,
           sector: sector || undefined,
           masters_granting: mastersOnly ? true : undefined,
           limit: 25,
