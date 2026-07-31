@@ -122,8 +122,14 @@ the job.
    then add it as a repository secret: Settings → Secrets and variables →
    Actions → New repository secret → name it `CLAUDE_CODE_OAUTH_TOKEN`,
    paste the generated token as the value. Never commit this token to the
-   repo, and never set `ANTHROPIC_API_KEY` alongside it — the workflow
-   only declares one auth input at a time.
+   repo. The workflow's `with:` block only declares `claude_code_oauth_token`
+   — it does not reference `secrets.ANTHROPIC_API_KEY` at all, so a leftover
+   `ANTHROPIC_API_KEY` secret from before the 2026-07-29 switch (§8.1) is
+   inert, not read by this workflow. It isn't enforced or checked at
+   runtime, though; once OAuth auth is confirmed working, delete the old
+   `ANTHROPIC_API_KEY` secret (Settings → Secrets and variables → Actions)
+   as cleanup rather than leaving an unused, still-funded key sitting in
+   the repo.
 
 ### 3.2 Permissions summary
 
