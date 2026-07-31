@@ -29,9 +29,15 @@ export interface UniversitySummary {
   coverage_tier: CoverageTier;
 }
 
+export type AliasType =
+  | "ipeds_alias"
+  | "former_name"
+  | "common_abbreviation"
+  | "other";
+
 export interface UniversityAlias {
   alias: string;
-  alias_type: string;
+  alias_type: AliasType;
   source: string;
 }
 
