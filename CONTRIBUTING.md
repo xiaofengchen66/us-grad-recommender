@@ -57,3 +57,35 @@ survivorship bias, migration safety, etc.).
 `docs/FULL_HANDOFF.md` §20–21 has the roadmap and the first-issue list.
 Work is scoped issue-by-issue on purpose — don't ask an agent to "build the
 whole platform" in one pass.
+
+## Multiple agent sessions sharing this repo
+
+As of 2026-07-31 this is a real, not hypothetical, situation: more than one
+independently-launched Claude Code session can be pointed at this same
+checkout at the same time (e.g. one session building a feature while
+another reviews or builds something else). A few things follow from that:
+
+- **There is no live agent-to-agent messaging channel.** `SendMessage`
+  only reaches agents spawned within the *same* session's orchestration
+  tree (via the `Agent` tool) — it cannot reach a separate,
+  independently-launched Claude Code process, confirmed by trying it
+  2026-07-31 (`"No agent named 'reviewer' is reachable..."`). Coordination
+  between independently-launched sessions is **manual relay by the human**,
+  or **async via PR comments** — nothing else is wired up. Don't assume
+  otherwise.
+- **Check before you touch a branch.** Before switching branches, committing,
+  or pushing, run `git status` and `git log -3` on the branch you're about
+  to touch. If there's a commit newer than a few minutes that you don't
+  recognize, another session is very likely actively working there —
+  don't check it out, don't push to it, don't edit its files. Wait, or ask
+  the human.
+- **Use a separate `git worktree` for unrelated work**, rather than
+  switching branches in the shared working directory, when another
+  session might be mid-edit. Branch-switching changes every file in the
+  working tree out from under whatever the other session currently has
+  open; a worktree (`git worktree add <path> -b <branch> origin/main`)
+  gives you an isolated directory on its own branch without touching the
+  shared one at all.
+- **Check `gh pr list` before starting substantial work** to avoid two
+  sessions independently building the same thing, or one session's fix
+  landing on top of another's in-flight, uncommitted changes.
