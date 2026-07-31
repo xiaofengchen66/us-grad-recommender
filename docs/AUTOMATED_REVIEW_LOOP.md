@@ -104,15 +104,26 @@ the job.
 1. You must be a repository admin.
 2. Easiest path: in a terminal, run `claude` then `/install-github-app`,
    and follow the prompts — this installs the GitHub App on this
-   repository and walks through adding the required secret.
+   repository and walks through adding the required secret. (Not
+   available in every environment — e.g. restricted/headless runtimes
+   without an interactive browser flow. Use the manual steps below in
+   that case.)
 3. Manual alternative: visit https://github.com/apps/claude, click
    "Install", select `xiaofengchen66/us-grad-recommender`, grant the
    requested permissions (Contents, Pull requests, Issues — all
    Read & Write, as listed above).
-4. Add the `ANTHROPIC_API_KEY` secret: repo Settings → Secrets and
-   variables → Actions → New repository secret → name it
-   `ANTHROPIC_API_KEY`, value from your Anthropic Console API key. Never
-   commit this key to the repo.
+4. **Authentication: OAuth token, not an API key.** This project uses
+   `claude_code_oauth_token`, tied to a Claude Pro/Max subscription,
+   rather than `anthropic_api_key` (metered API billing) — decided
+   2026-07-29 after hitting a hard-to-diagnose instant, zero-cost failure
+   under API-key auth (see §8.1). Generate the token by running
+   `claude setup-token` locally (Pro/Max users only — this is the
+   official Anthropic-documented method, not a project-specific script),
+   then add it as a repository secret: Settings → Secrets and variables →
+   Actions → New repository secret → name it `CLAUDE_CODE_OAUTH_TOKEN`,
+   paste the generated token as the value. Never commit this token to the
+   repo, and never set `ANTHROPIC_API_KEY` alongside it — the workflow
+   only declares one auth input at a time.
 
 ### 3.2 Permissions summary
 
@@ -121,26 +132,31 @@ the job.
 | Workflow's `GITHUB_TOKEN` (`permissions:` block) | `contents: read`, `pull-requests: write`, `id-token: write` | Covers this workflow's own steps (checkout, idempotency check) |
 | Claude GitHub App (installed separately) | Contents R&W, Pull Requests R&W, Issues R&W | What `claude-code-action` actually operates with; broader than the block above, per §3 |
 | Claude Code CLI tool access (`--allowedTools`) | `Read, Grep, Glob, Bash(gh pr view:*), Bash(gh pr diff:*), Bash(gh pr comment:*)` | The actual operative restriction — no edit/write/push/merge tool exists to call |
-| `ANTHROPIC_API_KEY` secret | N/A (not a GitHub permission) | Anthropic API billing/auth only |
+| `CLAUDE_CODE_OAUTH_TOKEN` secret | N/A (not a GitHub permission) | Claude Code authentication, billed against the Pro/Max subscription rather than metered API usage |
 
 ---
 
 ## 4. Cost implications
 
-Two components:
+**Updated 2026-07-29** — since switching to `claude_code_oauth_token`
+(§3.1, §8.1), Claude Code usage from this workflow is billed against the
+Claude Pro/Max subscription's usage allowance, not metered per-token API
+billing. Two components:
 
-- **Anthropic API usage** — one Claude Code run per un-reviewed commit
-  (reading 3 docs + the PR diff + producing a structured review). Actual
-  per-run cost depends on PR size and hasn't been measured yet on this
-  repo; report real numbers after the first several runs rather than
-  estimating blind.
+- **Claude subscription usage** — one Claude Code run per un-reviewed
+  commit (reading 3 docs + the PR diff + producing a structured review)
+  draws against the subscription's usage limits rather than incurring a
+  separate dollar cost per run. If usage volume ever becomes a real
+  constraint (e.g. many PRs/day), that would show up as hitting the
+  subscription's rate/usage limits rather than an API bill — worth
+  monitoring once real PR volume picks up, not a concern to solve now.
 - **GitHub Actions minutes** — a few minutes of `ubuntu-latest` runner
   time per run; negligible at this repo's current PR volume.
 
-Cost controls already built in: concurrency cancellation (a rapid second
-push cancels the stale in-flight review before it finishes) and the
-idempotency check (zero Claude calls for a commit that's already been
-reviewed). Cost scales with number of distinct commits pushed to open
+Cost/usage controls already built in: concurrency cancellation (a rapid
+second push cancels the stale in-flight review before it finishes) and
+the idempotency check (zero Claude calls for a commit that's already been
+reviewed). Usage scales with number of distinct commits pushed to open
 PRs, which is expected and accepted, not a bug.
 
 ---
@@ -160,7 +176,7 @@ Restated from the design discussion, now as implemented:
   the allowlist.
 - **No approval, no merge**: no `gh pr merge`/`gh pr review --approve` in
   the allowlist, and no such step exists anywhere in this workflow file.
-- **No secret leakage**: `ANTHROPIC_API_KEY` only via `secrets.*`;
+- **No secret leakage**: `CLAUDE_CODE_OAUTH_TOKEN` only via `secrets.*`;
   `show_full_output` is left at its default (`false`), so tool output
   (which could echo file contents) isn't dumped into public Actions logs.
 - **Prompt injection from PR content**: bounded impact by design — even if
@@ -251,6 +267,43 @@ succeeding, as it did here, confirms the App is installed and credentials
 are wired correctly), but the first real structured review comment will
 only be produced once this file matches `main` — i.e., after this PR
 merges, on whatever PR is reviewed next.
+
+### 8.1 API-key authentication failure, resolved by switching to OAuth token
+
+**Empirically observed** (2026-07-29, PR #3, the first PR opened after the
+workflow file actually landed on `main` — so the §8 validation gate was
+no longer in the way): the run got past App auth and past workflow
+validation, reached the actual `claude-code-action` execution, and failed
+immediately:
+
+```json
+{
+  "type": "result",
+  "subtype": "success",
+  "is_error": true,
+  "duration_ms": 409,
+  "num_turns": 1,
+  "total_cost_usd": 0,
+  "permission_denials_count": 0
+}
+```
+
+Adding Anthropic API credits and re-running produced the identical
+signature (`duration_ms: 1248`, still `total_cost_usd: 0`) — a real
+"insufficient credits" failure would be expected to bill at least
+partially once generation starts, not fail instantly at $0 twice in a
+row. With `show_full_output` correctly left at its secure default
+(§5), the exact API-side rejection reason wasn't visible in the logs;
+the leading hypothesis was that the API key's account lacked access to
+whatever model `claude-code-action` defaults to (logged as
+`"model": "claude-opus-5[1m]"`, not something this workflow specifies).
+
+Rather than keep debugging an opaque, credit-billed API key blind, the
+decision (2026-07-29) was to switch authentication entirely to
+`claude_code_oauth_token` (§3.1) — tied to a Claude Pro/Max subscription
+instead of metered API access. This sidesteps the whole class of
+"does this API key's account have the right model/tier access" failure
+modes. See §4 for how this changes the cost model.
 
 ---
 
