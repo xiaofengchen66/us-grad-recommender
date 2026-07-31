@@ -120,6 +120,22 @@ npm run dev
 Requires the API (above) to be running separately. Open
 `http://localhost:3000`.
 
+Frontend checks (CI runs the same — see the `web` job in
+`.github/workflows/ci.yml`):
+
+```bash
+cd web
+npx tsc --noEmit
+npx eslint .
+npm test
+npm run build
+```
+
+`tests/test_frontend_contract.py` (in the main pytest suite) guards
+against `web/src/lib/api.ts`'s hand-maintained types drifting from
+`api/schemas.py`/`models/university.py` — run it as part of `pytest -q`
+below, not from `web/`.
+
 ## Development checks
 
 Run these before opening a PR (CI runs the same checks — see

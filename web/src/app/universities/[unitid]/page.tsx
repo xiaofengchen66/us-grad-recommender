@@ -1,20 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getUniversity } from "@/lib/api";
-
-// `website` is sourced from the trusted, admin-run IPEDS import today, but
-// a future catalog-adapter-scraped source (docs/PHASE_2_CATALOG_DESIGN.md)
-// would be less trustworthy — reject anything that isn't http(s) rather
-// than assuming a bare string is always a safe href (e.g. `javascript:`).
-function safeWebsiteHref(website: string): string | null {
-  const withScheme = /^https?:\/\//i.test(website) ? website : `https://${website}`;
-  try {
-    const url = new URL(withScheme);
-    return url.protocol === "http:" || url.protocol === "https:" ? url.toString() : null;
-  } catch {
-    return null;
-  }
-}
+import { safeWebsiteHref } from "@/lib/validation";
 
 function Field({ label, value }: { label: string; value: React.ReactNode }) {
   if (value === null || value === undefined || value === "") return null;
