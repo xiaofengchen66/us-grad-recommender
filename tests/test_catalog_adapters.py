@@ -148,6 +148,58 @@ def test_extract_requirements_drops_content_before_first_heading(requirements_ht
     assert "Graduate handbook information" not in combined
 
 
+def test_extract_requirements_preserves_table_row_and_cell_boundaries():
+    # Synthetic fixture — not from any real institution's page. It exists
+    # only to exercise a real CourseLeaf structural pattern (a <table> of
+    # course/credit-hour rows between two <h2> headings, the same shape as
+    # the real "Graduate Studies Committee" table trimmed out of
+    # ut_austin_computer_science_program.html) without asserting anything
+    # about an actual school's curriculum.
+    html = """
+    <div id="textcontainer" class="page_content">
+    <h2 name="text">Required Courses</h2>
+    <table class="cldatatable">
+      <tr><th>Code</th><th>Title</th><th>Credit Hours</th></tr>
+      <tr><td>CS 601</td><td>Foundations of Testing</td><td>3</td></tr>
+      <tr><td>CS 602</td><td>Advanced Fixtures</td><td>3</td></tr>
+    </table>
+    </div>
+    """
+    candidates = CourseLeafAdapter().extract_requirements("https://example.edu/", html)
+    assert len(candidates) == 1
+    assert candidates[0].raw_text == (
+        "Code | Title | Credit Hours\nCS 601 | Foundations of Testing | 3\n"
+        "CS 602 | Advanced Fixtures | 3"
+    )
+
+
+def test_extract_degrees_returns_empty_list_when_no_textcontainer():
+    candidates = CourseLeafAdapter().extract_degrees(
+        "https://example.edu/", "<html><body></body></html>"
+    )
+    assert candidates == []
+
+
+def test_extract_degrees_returns_empty_list_when_no_centered_banner():
+    html = '<div id="textcontainer" class="page_content"><p>No banner here.</p></div>'
+    assert CourseLeafAdapter().extract_degrees("https://example.edu/", html) == []
+
+
+def test_extract_degrees_returns_empty_list_when_banner_has_no_em():
+    html = (
+        '<div id="textcontainer" class="page_content">'
+        '<p style="text-align:center">No emphasis tag here.</p></div>'
+    )
+    assert CourseLeafAdapter().extract_degrees("https://example.edu/", html) == []
+
+
+def test_extract_requirements_returns_empty_list_when_no_textcontainer():
+    candidates = CourseLeafAdapter().extract_requirements(
+        "https://example.edu/", "<html><body></body></html>"
+    )
+    assert candidates == []
+
+
 def test_adapter_registry_detects_courseleaf_first_match(listing_html):
     registry = AdapterRegistry([CourseLeafAdapter()])
     adapter = registry.detect(LISTING_URL, listing_html)
@@ -158,3 +210,36 @@ def test_adapter_registry_detects_courseleaf_first_match(listing_html):
 def test_adapter_registry_returns_none_when_nothing_matches():
     registry = AdapterRegistry([CourseLeafAdapter()])
     assert registry.detect("https://example.edu/", "<html></html>") is None
+
+
+class _AlwaysMatchStubAdapter:
+    """Minimal stand-in adapter that matches everything — used only to
+    prove AdapterRegistry honors list order rather than happening to work
+    with a single real adapter.
+    """
+
+    name = "always-match-stub"
+
+    def detect(self, url: str, html: str) -> bool:
+        return True
+
+    def extract_programs(self, url: str, html: str):
+        return []
+
+    def extract_degrees(self, url: str, html: str):
+        return []
+
+    def extract_requirements(self, url: str, html: str):
+        return []
+
+
+def test_adapter_registry_honors_order_first_match_wins(listing_html):
+    registry = AdapterRegistry([CourseLeafAdapter(), _AlwaysMatchStubAdapter()])
+    adapter = registry.detect(LISTING_URL, listing_html)
+    assert adapter is not None
+    assert adapter.name == "courseleaf"
+
+    reordered = AdapterRegistry([_AlwaysMatchStubAdapter(), CourseLeafAdapter()])
+    adapter = reordered.detect(LISTING_URL, listing_html)
+    assert adapter is not None
+    assert adapter.name == "always-match-stub"

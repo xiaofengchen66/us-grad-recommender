@@ -19,6 +19,7 @@ dev = [
     "ruff>=0.6",
     "mypy>=1.10",
     "httpx>=0.27",
+    "types-beautifulsoup4>=4.12",
 ]
 
 [project.scripts]

@@ -79,7 +79,7 @@ class CourseLeafAdapter:
         if banner is None:
             return []
         emphasis = banner.find("em")
-        if emphasis is None:
+        if not isinstance(emphasis, Tag):
             return []
         lines = emphasis.get_text(separator="\n").split("\n")
         return [
@@ -114,7 +114,21 @@ class CourseLeafAdapter:
                 # verbatim-raw-text guarantee §0/§4 depend on.
                 if isinstance(sibling, Tag) and "sitemap" in (sibling.get("class") or []):
                     continue
-                text = sibling.get_text(" ", strip=True)
+                if isinstance(sibling, Tag) and sibling.name == "table":
+                    # CourseLeaf degree-requirement pages commonly present
+                    # course-list requirements as a <table> between two
+                    # <h2> headings. Flattening it with a single
+                    # get_text(" ") run would merge row/column boundaries
+                    # into one undifferentiated string, destroying the
+                    # "raw text preserved in full" guarantee (§0/§4) —
+                    # not because characters go missing, but because which
+                    # cell/row they belonged to becomes unrecoverable.
+                    # raw_text is still a plain string (the schema column
+                    # is Text, not JSONB), so structure is kept via plain
+                    # delimiters: " | " between cells, newline between rows.
+                    text = self._table_to_text(sibling)
+                else:
+                    text = sibling.get_text(" ", strip=True)
                 if text:
                     text_parts.append(text)
             raw_text = "\n".join(text_parts)
@@ -128,4 +142,15 @@ class CourseLeafAdapter:
     @staticmethod
     def _textcontainer(html: str) -> Optional[Tag]:
         soup = BeautifulSoup(html, "html.parser")
-        return soup.find(id="textcontainer")
+        result = soup.find(id="textcontainer")
+        return result if isinstance(result, Tag) else None
+
+    @staticmethod
+    def _table_to_text(table: Tag) -> str:
+        rows = []
+        for row in table.find_all("tr"):
+            cells = [cell.get_text(" ", strip=True) for cell in row.find_all(["td", "th"])]
+            cells = [cell for cell in cells if cell]
+            if cells:
+                rows.append(" | ".join(cells))
+        return "\n".join(rows)
