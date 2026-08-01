@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-from typing import List
+from typing import List, Optional
 from urllib.parse import urljoin
 
-from bs4 import BeautifulSoup
+from bs4 import BeautifulSoup, Tag
 
 from us_grad_recommender.catalog_adapters.base import (
     RawDegreeCandidate,
@@ -11,18 +11,21 @@ from us_grad_recommender.catalog_adapters.base import (
     RawRequirementCandidate,
 )
 
-# Confirmed against real catalog pages during Phase 2.2B pilot scoping
-# (docs/PHASE_2_CATALOG_DESIGN.md §13.1, docs/evidence/phase-2.2b-pilot-
-# scoping-2026-07-31.md): every self-hosted CourseLeaf catalog
-# (catalog.<school>.edu) references these two vendor assets.
+# Confirmed against real UT Austin catalog pages fetched directly during
+# Phase 2.2B pilot scoping (see tests/fixtures/courseleaf/ and this PR's
+# description for the underlying evidence — not carried by citation to a
+# sibling PR/doc that may not exist in this tree): every self-hosted
+# CourseLeaf catalog (catalog.<school>.edu) references these two vendor
+# assets.
 _DETECT_MARKERS = ("courseleaf.css", "courseleaf.js")
 
 # Non-program entries observed in real CourseLeaf "sitemap" listing pages
 # (catalog.utexas.edu/graduate/areas-of-study/natural-sciences/ lists
 # "Courses" alongside real programs; a program's own page links back to
 # "Degree Requirements" the same way, see tests/fixtures/courseleaf/). Only
-# extend this list against further real examples, not by guessing.
-_NON_PROGRAM_SLUGS = {"courses", "degree-requirements", "faculty"}
+# extend this list against further real examples, not by guessing — do not
+# add slugs (e.g. "faculty") without a fixture that actually exercises them.
+_NON_PROGRAM_SLUGS = {"courses", "degree-requirements"}
 
 
 class CourseLeafAdapter:
@@ -45,7 +48,7 @@ class CourseLeafAdapter:
         candidates: List[RawProgramCandidate] = []
         for sitemap in container.find_all("div", class_="sitemap"):
             for link in sitemap.find_all("a", href=True):
-                href = link["href"]
+                href = str(link["href"])
                 slug = href.rstrip("/").rsplit("/", 1)[-1]
                 if slug in _NON_PROGRAM_SLUGS:
                     continue
@@ -70,7 +73,8 @@ class CourseLeafAdapter:
         # the top of #textcontainer — confirmed against
         # catalog.utexas.edu/graduate/areas-of-study/natural-sciences/computer-science/.
         banner = container.find(
-            "p", style=lambda value: bool(value) and "text-align:center" in value
+            "p",
+            style=lambda value: bool(value) and "text-align:center" in value.replace(" ", ""),
         )
         if banner is None:
             return []
@@ -85,6 +89,11 @@ class CourseLeafAdapter:
         ]
 
     def extract_requirements(self, url: str, html: str) -> List[RawRequirementCandidate]:
+        # Content in #textcontainer before the first <h2> (e.g. a graduate-
+        # handbook disclaimer paragraph — see
+        # ut_austin_computer_science_degree_requirements.html) is
+        # intentionally dropped: a RawRequirementCandidate must carry a
+        # section_label, and that intro text isn't tied to any heading.
         container = self._textcontainer(html)
         if container is None:
             return []
@@ -97,6 +106,14 @@ class CourseLeafAdapter:
             for sibling in heading.find_next_siblings():
                 if sibling.name == "h2":
                     break
+                # A trailing "sitemap" div (a nav list of child-page links,
+                # e.g. "Degree Requirements" on the program page fixture)
+                # is boilerplate navigation, not requirement prose — same
+                # exclusion extract_programs() applies. Without this, its
+                # link text bleeds into raw_text and breaks the
+                # verbatim-raw-text guarantee §0/§4 depend on.
+                if isinstance(sibling, Tag) and "sitemap" in (sibling.get("class") or []):
+                    continue
                 text = sibling.get_text(" ", strip=True)
                 if text:
                     text_parts.append(text)
@@ -109,6 +126,6 @@ class CourseLeafAdapter:
         return candidates
 
     @staticmethod
-    def _textcontainer(html: str):
+    def _textcontainer(html: str) -> Optional[Tag]:
         soup = BeautifulSoup(html, "html.parser")
         return soup.find(id="textcontainer")

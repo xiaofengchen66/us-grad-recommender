@@ -87,6 +87,18 @@ def test_extract_degrees_from_real_program_page(program_html):
     ]
 
 
+def test_extract_degrees_tolerates_style_attribute_formatting_variants():
+    html = """
+    <div id="textcontainer" class="page_content">
+    <p style="text-align: center;"><em>Master of Arts in Testing</em></p>
+    </div>
+    """
+    candidates = CourseLeafAdapter().extract_degrees("https://example.edu/", html)
+    assert candidates == [
+        RawDegreeCandidate(raw_degree_name="Master of Arts in Testing", source_url="https://example.edu/")
+    ]
+
+
 def test_extract_requirements_splits_on_headings(requirements_html):
     candidates = CourseLeafAdapter().extract_requirements(REQUIREMENTS_URL, requirements_html)
 
@@ -106,6 +118,34 @@ def test_extract_requirements_on_program_page_captures_multiple_sections(program
     candidates = CourseLeafAdapter().extract_requirements(PROGRAM_URL, program_html)
     labels = [c.section_label for c in candidates]
     assert labels == ["For More Information", "Admission Requirements"]
+
+
+def test_extract_requirements_excludes_trailing_sitemap_nav_text(program_html):
+    # The real "Admission Requirements" section on this fixture is followed
+    # by a <div class="sitemap"> nav link ("Degree Requirements") before
+    # the next heading (there isn't one — it's the last section). That nav
+    # text must not bleed into raw_text and corrupt the verbatim-source
+    # guarantee.
+    candidates = CourseLeafAdapter().extract_requirements(PROGRAM_URL, program_html)
+    admission = next(c for c in candidates if c.section_label == "Admission Requirements")
+    assert admission.raw_text == (
+        "Most entering graduate students have degrees in computer science. "
+        "Students with degrees in other areas may be considered for admission; "
+        "if admitted, they may be required to take undergraduate courses in "
+        "computer science, without credit toward a graduate degree, to satisfy "
+        "background requirements."
+    )
+    assert "Degree Requirements" not in admission.raw_text
+
+
+def test_extract_requirements_drops_content_before_first_heading(requirements_html):
+    # ut_austin_computer_science_degree_requirements.html opens with a
+    # graduate-handbook disclaimer paragraph before the first <h2> — it has
+    # no section_label to attach to, so it's intentionally not surfaced as
+    # a RawRequirementCandidate.
+    candidates = CourseLeafAdapter().extract_requirements(REQUIREMENTS_URL, requirements_html)
+    combined = "\n".join(c.raw_text for c in candidates)
+    assert "Graduate handbook information" not in combined
 
 
 def test_adapter_registry_detects_courseleaf_first_match(listing_html):
