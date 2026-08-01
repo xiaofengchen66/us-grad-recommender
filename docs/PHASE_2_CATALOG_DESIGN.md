@@ -797,6 +797,80 @@ assumptions — consistent with how the Carnegie classification and
 master's-granting filter in this project were built against real
 downloaded files rather than assumed field names.
 
+### 13.1 Pilot scoping results (2026-07-31)
+
+Nine institutions (ten pages — Georgia Tech OMSCS needed two URLs) were
+inspected directly: an HTTP fetch with a browser-like User-Agent, then
+grepped for vendor markup — not guessed from vendor marketing pages. Every
+row below was independently fetched, not inferred from another row's
+result. Raw command output (HTTP status, matched lines, headers, robots.txt
+body) is committed at
+[`docs/evidence/phase-2.2b-pilot-scoping-2026-07-31.md`](evidence/phase-2.2b-pilot-scoping-2026-07-31.md)
+so these claims are checkable rather than taken on prose alone — consistent
+with §0's raw-evidence-next-to-normalized-value principle, even though this
+is manual pilot scoping and not yet going through `source_snapshots`.
+
+| Institution | Page checked | Result |
+|---|---|---|
+| UT Austin | `catalog.utexas.edu` | **CourseLeaf** — confirmed via `/css/courseleaf.css`, `/js/courseleaf.js`. HTTP 200, fetches cleanly. |
+| University of Alaska Fairbanks | `catalog.uaf.edu/masters/` | **CourseLeaf** — same signature, independently fetched. HTTP 200, fetches cleanly. |
+| Georgia Tech (general catalog) | `catalog.gatech.edu` | **CourseLeaf** — same signature, independently fetched. HTTP 200, fetches cleanly. |
+| UC Davis | `catalog.ucdavis.edu` | **CourseLeaf** — same signature, independently fetched. HTTP 200, fetches cleanly. |
+| UIUC | `catalog.illinois.edu/graduate/` | **CourseLeaf** — same signature, independently fetched. HTTP 200, fetches cleanly. |
+| MIT | `catalog.mit.edu` | **CourseLeaf** — same signature, independently fetched. HTTP 200, fetches cleanly. |
+| University of New Haven | `catalog.newhaven.edu/content.php?...` (branded "Modern Campus Catalog™" in search results; `content.php?catoid=&navoid=` URL shape matches the Acalog/Modern Campus family) | **Modern Campus/Acalog family, but blocked at fetch time** — direct HTTPS GET returns `202 Accepted`, empty body, header `x-amzn-waf-action: challenge`. This is an AWS WAF bot-challenge, not a robots.txt exclusion — the site's own `robots.txt` does not disallow `/content.php`, it just sets `crawl-delay: 120` for unnamed agents (see evidence log). |
+| Alabama A&M University | `aamu.edu/academics/catalogs/graduate-catalog.html` | **PDF-only** — no browsable HTML catalog exists at all; the page is a list of yearly PDF downloads (2009–2027), confirmed by name-matching each listed link. |
+| Stanford | `bulletin.stanford.edu` | **Coursedog** — a third, structurally different vendor: a client-rendered Nuxt/Vue single-page app (`app.coursedog.com`), not server-rendered HTML. Page content ships as an embedded `__NUXT_DATA__` JSON blob rather than markup, so a naive HTML-text adapter would see nothing. |
+| Georgia Tech OMSCS (program microsite, not the general catalog) | `omscs.gatech.edu/admission-criteria`, `.../prospective-student-faqs` | Plain custom HTML, not any catalog vendor — two URLs fetched independently. Confirms a real §8 online/visa-eligibility case in the institution's own words: *"International students applying to OMSCS are not offered visas, so they do not qualify for OPT."* / *"Georgia Tech will not support visas for OMSCS students. International students do not require U.S. residency to enroll in OMSCS."* |
+
+**Finding that revises the table above**: the "large R1" vs.
+"higher-not-highest research" split was assumed to also give CMS
+diversity, but it doesn't — UT Austin, UAF, Georgia Tech, UC Davis, UIUC,
+and MIT are *all* CourseLeaf. CourseLeaf appears to be the dominant vendor
+among large public/private research universities specifically, not evenly
+distributed across Carnegie tiers. Real CMS diversity in this sample came
+from institution *type* (PDF-only regional public, WAF-protected private
+master's-focused, JS-SPA elite private), not research-activity tier.
+
+**Revised final pilot (5), by adapter each would exercise**:
+
+1. **UT Austin** — `CourseLeafAdapter`. Large, clean, no bot-blocking;
+   good first target to get the adapter interface and pipeline working end
+   to end.
+2. **Alabama A&M University** — `PdfCatalogAdapter`. Already has seed data
+   in `tests/test_api.py`'s fixtures, so this doubles as a natural
+   continuity case. No online catalog exists, so this is real PDF-only,
+   not "PDF in addition to HTML."
+3. **Stanford** — exercises the adapter registry's fallback path for
+   real: neither `CourseLeafAdapter` nor `PdfCatalogAdapter` will
+   `detect()` a Coursedog page. Whether this becomes a dedicated
+   `CoursedogAdapter` (structured JSON, actually easier than HTML scraping
+   if the embedded state is parseable) or falls through to
+   `LLMFallbackAdapter` is a real Phase 2.2B design question, not
+   speculative.
+4. **Georgia Tech OMSCS** — exercises §7.2/§8 (track vs. program,
+   online/visa distinction) against a real, already-confirmed case instead
+   of a hypothetical one.
+5. **University of New Haven** — deliberately kept *because* it's
+   WAF-blocked, not despite it. A plain `httpx`/`requests` fetch cannot
+   reach this page at all; confirming that now, before any adapter code
+   is written, avoids discovering it mid-pilot. Whether the fetch layer
+   needs a headless-browser fallback (e.g. Playwright) for WAF-challenged
+   sources is a scoping question for the fetch-layer issue, not the
+   adapter issue.
+
+**Dropped from the original candidate list**: UAF, UC Davis, UIUC, MIT
+(all CMS-redundant with UT Austin per the finding above — kept as evidence
+in the table, not re-visited as separate pilot targets). This is a
+deduplication at the adapter-engineering level, not a deprioritization of
+the product mission: `FULL_HANDOFF.md` §2 names UAF by name as a flagship
+"overlooked institution" example, and a `CourseLeafAdapter` validated
+against UT Austin is expected to parse UAF's catalog "for free" once it
+exists, precisely because both run the same underlying platform.
+
+This is still design/validation only — no adapter code and no scheduled
+crawling exist yet as a result of this research.
+
 ---
 
 ## 14. Design decisions — status
@@ -815,10 +889,12 @@ downloaded files rather than assumed field names.
    automated extraction, deterministic or LLM, goes through
    `data_review_tasks` before being trusted. Revisit once the pilot
    produces real per-adapter/per-field confidence-calibration data.
-4. **PDF catalog handling depth**: **still open, deliberately deferred —
-   not decided blind.** We don't yet have a real PDF-catalog example to
-   look at (§13 flagged this rather than guessing one). Proposed bounded
-   default, to be confirmed once the pilot identifies actual candidates:
+4. **PDF catalog handling depth**: **still open — a real candidate now
+   exists, but the depth question isn't decided.** §13.1 confirmed
+   Alabama A&M University has no browsable HTML catalog at all (PDF-only,
+   2009–2027), so this is no longer a hypothetical case. Proposed bounded
+   default, still to be confirmed once the `PdfCatalogAdapter` is actually
+   built against this real file:
    `PdfCatalogAdapter` attempts text-layer extraction only (e.g. via
    `pdfplumber`/`pypdf`); if the PDF has a usable text layer, the
    extracted text flows into the same deterministic-parse-then-
@@ -870,7 +946,9 @@ Explicit, not yet scheduled to a specific phase sub-step beyond "Phase
   two tracks" and "correctly modeled as two programs" outcomes.
 - [ ] Build the UT Austin CDSO (MSCS/MSDS/MSAI) and Georgia Tech OMSCS
   fixtures named in §8.3, sourced from official pages when that work
-  starts — not asserted as fact here.
+  starts — not asserted as fact here. (§13.1 confirmed the OMSCS
+  visa-ineligibility language from `omscs.gatech.edu` directly; the UT
+  Austin CDSO side is still unconfirmed.)
 - [ ] Define the review-task behavior specifically for the "should this
   online/campus offering be a separate Program?" ambiguous case (§7.2) —
   it's specified as "must create a review task," but the task's exact
