@@ -6,6 +6,7 @@ from us_grad_recommender.catalog_adapters.base import (
     RawRequirementCandidate,
 )
 from us_grad_recommender.catalog_adapters.courseleaf import CourseLeafAdapter
+from us_grad_recommender.catalog_adapters.pdf import PdfCatalogAdapter
 
 __all__ = [
     "AdapterRegistry",
@@ -14,4 +15,5 @@ __all__ = [
     "RawProgramCandidate",
     "RawRequirementCandidate",
     "CourseLeafAdapter",
+    "PdfCatalogAdapter",
 ]

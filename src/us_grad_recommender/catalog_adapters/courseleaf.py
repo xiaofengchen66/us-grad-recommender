@@ -38,11 +38,12 @@ class CourseLeafAdapter:
 
     name = "courseleaf"
 
-    def detect(self, url: str, html: str) -> bool:
+    def detect(self, url: str, content: bytes) -> bool:
+        html = content.decode("utf-8", errors="replace")
         return any(marker in html for marker in _DETECT_MARKERS)
 
-    def extract_programs(self, url: str, html: str) -> List[RawProgramCandidate]:
-        container = self._textcontainer(html)
+    def extract_programs(self, url: str, content: bytes) -> List[RawProgramCandidate]:
+        container = self._textcontainer(content)
         if container is None:
             return []
         candidates: List[RawProgramCandidate] = []
@@ -64,8 +65,8 @@ class CourseLeafAdapter:
                 )
         return candidates
 
-    def extract_degrees(self, url: str, html: str) -> List[RawDegreeCandidate]:
-        container = self._textcontainer(html)
+    def extract_degrees(self, url: str, content: bytes) -> List[RawDegreeCandidate]:
+        container = self._textcontainer(content)
         if container is None:
             return []
         # CourseLeaf program pages declare the degree(s) offered as a
@@ -88,13 +89,13 @@ class CourseLeafAdapter:
             if line.strip()
         ]
 
-    def extract_requirements(self, url: str, html: str) -> List[RawRequirementCandidate]:
+    def extract_requirements(self, url: str, content: bytes) -> List[RawRequirementCandidate]:
         # Content in #textcontainer before the first <h2> (e.g. a graduate-
         # handbook disclaimer paragraph — see
         # ut_austin_computer_science_degree_requirements.html) is
         # intentionally dropped: a RawRequirementCandidate must carry a
         # section_label, and that intro text isn't tied to any heading.
-        container = self._textcontainer(html)
+        container = self._textcontainer(content)
         if container is None:
             return []
         candidates: List[RawRequirementCandidate] = []
@@ -140,7 +141,8 @@ class CourseLeafAdapter:
         return candidates
 
     @staticmethod
-    def _textcontainer(html: str) -> Optional[Tag]:
+    def _textcontainer(content: bytes) -> Optional[Tag]:
+        html = content.decode("utf-8", errors="replace")
         soup = BeautifulSoup(html, "html.parser")
         result = soup.find(id="textcontainer")
         return result if isinstance(result, Tag) else None
