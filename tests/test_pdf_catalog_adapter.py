@@ -3,8 +3,9 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-from pypdf._page import PageObject
+from pypdf import PageObject
 
+import us_grad_recommender.catalog_adapters.pdf as pdf_module
 from us_grad_recommender.catalog_adapters import (
     AdapterRegistry,
     CourseLeafAdapter,
@@ -89,6 +90,17 @@ def blank_pdf() -> bytes:
     return _load("synthetic_blank_no_text_layer.pdf")
 
 
+@pytest.fixture()
+def blank_then_real_text_pdf() -> bytes:
+    # Synthetic combination — a blank page followed by a real biology
+    # page. Exists to prove has_usable_text_layer() isn't fooled by a
+    # document whose early pages (a graphical cover, seal, or blank
+    # divider) happen to be text-free — a plausible real-world layout
+    # this adapter has no evidence ruling out, and the exact case an
+    # earlier 5-page-sample version of this method would have missed.
+    return _load("synthetic_blank_then_real_text.pdf")
+
+
 def test_detect_matches_pdf_magic_bytes(biology_page):
     assert PdfCatalogAdapter().detect(CATALOG_URL, biology_page) is True
 
@@ -105,13 +117,22 @@ def test_has_usable_text_layer_false_for_blank_pdf(blank_pdf):
     assert PdfCatalogAdapter().has_usable_text_layer(blank_pdf) is False
 
 
+def test_has_usable_text_layer_true_when_early_pages_are_blank(blank_then_real_text_pdf):
+    # Regression test for the found-in-review issue where an earlier
+    # 5-page-sample version of this method would have been fooled by a
+    # document whose usable text starts after some early blank pages.
+    # This fixture only has 2 pages, but the fix (scan every page, not a
+    # fixed early sample) is what's actually under test here.
+    assert PdfCatalogAdapter().has_usable_text_layer(blank_then_real_text_pdf) is True
+
+
 def test_extract_programs_from_real_biology_page(biology_page):
     candidates = PdfCatalogAdapter().extract_programs(CATALOG_URL, biology_page)
     assert candidates == [
         RawProgramCandidate(
             name="Biology",
             program_url=f"{CATALOG_URL}#page=1",
-            source_url=CATALOG_URL,
+            source_url=f"{CATALOG_URL}#page=1",
         )
     ]
 
@@ -122,7 +143,7 @@ def test_extract_programs_from_real_computer_science_page(computer_science_page)
         RawProgramCandidate(
             name="Computer Science",
             program_url=f"{CATALOG_URL}#page=1",
-            source_url=CATALOG_URL,
+            source_url=f"{CATALOG_URL}#page=1",
         )
     ]
 
@@ -141,7 +162,7 @@ def test_extract_programs_works_on_encrypted_pdf(encrypted_biology_page):
         RawProgramCandidate(
             name="Biology",
             program_url=f"{CATALOG_URL}#page=1",
-            source_url=CATALOG_URL,
+            source_url=f"{CATALOG_URL}#page=1",
         )
     ]
 
@@ -236,6 +257,10 @@ def test_extract_programs_and_degrees_carry_correct_page_anchor_across_pages(two
         f"{CATALOG_URL}#page=1",
         f"{CATALOG_URL}#page=2",
     ]
+    assert [p.source_url for p in programs] == [
+        f"{CATALOG_URL}#page=1",
+        f"{CATALOG_URL}#page=2",
+    ]
     assert [d.raw_degree_name for d in degrees] == ["Master of Science", "Master of Science"]
     assert [d.source_url for d in degrees] == [
         f"{CATALOG_URL}#page=1",
@@ -292,6 +317,25 @@ def test_extraction_survives_a_page_that_fails_to_extract_text(biology_page, mon
         raise RuntimeError("simulated malformed content stream")
 
     monkeypatch.setattr(PageObject, "extract_text", _raise)
+
+    adapter = PdfCatalogAdapter()
+    assert adapter.extract_programs(CATALOG_URL, biology_page) == []
+    assert adapter.extract_degrees(CATALOG_URL, biology_page) == []
+    assert adapter.extract_requirements(CATALOG_URL, biology_page) == []
+    assert adapter.has_usable_text_layer(biology_page) is False
+
+
+def test_reader_fails_gracefully_on_unexpected_construction_error(biology_page, monkeypatch):
+    # _reader()'s except clause used to be narrowed to
+    # (PdfReadError, ValueError) specifically. pypdf doesn't guarantee a
+    # malformed/truncated real-world PDF (network truncation, a
+    # non-standard xref table — plausible once a live fetch layer exists)
+    # surfaces as one of those two types rather than some other internal
+    # exception, so this simulates an arbitrary one via monkeypatch.
+    def _raise(*args, **kwargs):
+        raise RuntimeError("simulated unexpected pypdf internal error")
+
+    monkeypatch.setattr(pdf_module, "PdfReader", _raise)
 
     adapter = PdfCatalogAdapter()
     assert adapter.extract_programs(CATALOG_URL, biology_page) == []

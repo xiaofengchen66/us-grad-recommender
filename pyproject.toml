@@ -11,7 +11,7 @@ dependencies = [
     "fastapi>=0.110",
     "uvicorn>=0.29",
     "beautifulsoup4>=4.12",
-    "pypdf[crypto]>=5.0",
+    "pypdf[crypto]>=6.0,<7",
 ]
 
 [project.optional-dependencies]

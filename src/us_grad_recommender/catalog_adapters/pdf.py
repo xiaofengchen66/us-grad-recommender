@@ -2,11 +2,9 @@ from __future__ import annotations
 
 import io
 import re
-from itertools import islice
 from typing import Iterator, List, Optional, Tuple
 
 from pypdf import PasswordType, PdfReader
-from pypdf.errors import PdfReadError
 
 from us_grad_recommender.catalog_adapters.base import (
     RawDegreeCandidate,
@@ -78,9 +76,19 @@ class PdfCatalogAdapter:
         built) ingestion pipeline can call to decide whether a PDF needs a
         manual-entry review task per §14 decision 4, instead of every
         adapter needing its own ad hoc way to signal "found nothing".
+
+        Checks every page, not a fixed-size sample: any() short-circuits
+        on the first page with real text, so this is only O(all pages) in
+        the true no-usable-text-layer case — exactly the case this method
+        exists to detect accurately, so scanning fewer pages to save time
+        there would trade away the one thing that matters. A fixed
+        early-page sample (an earlier version checked only the first 5)
+        would wrongly report "no text layer" for a real catalog with a
+        graphical cover/seal/TOC in its first few pages followed by
+        genuine text-layer content later — a plausible layout this
+        adapter has no evidence ruling out.
         """
-        first_pages = islice(self._iter_pages(content), 5)
-        return any(lines for _page_index, lines in first_pages)
+        return any(lines for _page_index, lines in self._iter_pages(content))
 
     def extract_programs(self, url: str, content: bytes) -> List[RawProgramCandidate]:
         numbered_lines = list(self._iter_lines(content))
@@ -88,7 +96,7 @@ class PdfCatalogAdapter:
             RawProgramCandidate(
                 name=name_line,
                 program_url=f"{url}#page={page_index + 1}",
-                source_url=url,
+                source_url=f"{url}#page={page_index + 1}",
             )
             for page_index, name_line, _degree_line in self._find_programs_and_degrees(
                 numbered_lines
@@ -198,7 +206,16 @@ class PdfCatalogAdapter:
                 if reader.decrypt("") == PasswordType.NOT_DECRYPTED:
                     return None
             return reader
-        except (PdfReadError, ValueError):
+        except Exception:
+            # Broad on purpose, same "fail gracefully, never crash the
+            # caller" contract already applied to page.extract_text() in
+            # _iter_pages() below. PdfReader() construction and decrypt()
+            # are exposed to the same class of malformed/truncated
+            # real-world PDFs (plausible once a live fetch layer exists —
+            # network truncation, a non-standard xref table), and pypdf
+            # doesn't guarantee every such failure surfaces as
+            # PdfReadError/ValueError specifically rather than some other
+            # internal exception.
             return None
 
     def _iter_pages(self, content: bytes) -> Iterator[Tuple[int, List[str]]]:
