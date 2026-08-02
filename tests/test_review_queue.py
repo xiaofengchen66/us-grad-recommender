@@ -149,6 +149,37 @@ def test_list_review_tasks_with_explicit_status_sees_resolved(db_session, progra
     assert [t.id for t in tasks] == [task.id]
 
 
+def test_list_review_tasks_orders_deterministically_within_same_transaction(db_session, program):
+    # Postgres's now() (what created_at's server_default uses) returns
+    # *transaction* start time, not per-statement time — a realistic case
+    # once the parser pipeline creates several tasks from one adapter run
+    # before committing. created_at alone ties for all three of these;
+    # id must be the tiebreaker for "oldest first" to actually mean
+    # "insertion order" rather than whatever the query planner picks.
+    first = create_review_task(
+        db_session,
+        entity_type=CatalogEntityType.PROGRAM,
+        entity_id=program.id,
+        reason=ReviewReason.FIRST_SEEN,
+    )
+    second = create_review_task(
+        db_session,
+        entity_type=CatalogEntityType.PROGRAM,
+        entity_id=program.id,
+        reason=ReviewReason.LOW_CONFIDENCE,
+    )
+    third = create_review_task(
+        db_session,
+        entity_type=CatalogEntityType.PROGRAM,
+        entity_id=program.id,
+        reason=ReviewReason.POSSIBLE_DUPLICATE,
+    )
+
+    assert first.created_at == second.created_at == third.created_at
+    tasks = list_review_tasks(db_session)
+    assert [t.id for t in tasks] == [first.id, second.id, third.id]
+
+
 def test_resolve_review_task_sets_status_and_resolved_at(db_session, program):
     task = create_review_task(
         db_session,
@@ -273,6 +304,24 @@ def test_list_data_conflicts_filters_by_entity_type(db_session, program):
     assert [c.id for c in conflicts] == [program_conflict.id]
 
 
+def test_list_data_conflicts_with_explicit_status_sees_resolved(db_session, program):
+    conflict = create_data_conflict(
+        db_session,
+        entity_type=CatalogEntityType.PROGRAM,
+        entity_id=program.id,
+        field_name="canonical_name",
+        current_value="Computer Science",
+        current_verification_status=VerificationStatus.USER_CONFIRMED,
+        proposed_value="Computer Science and Engineering",
+    )
+    resolve_data_conflict(db_session, conflict.id, status=ConflictStatus.RESOLVED_KEPT_CURRENT)
+
+    conflicts = list_data_conflicts(
+        db_session, status=[ConflictStatus.RESOLVED_KEPT_CURRENT]
+    )
+    assert [c.id for c in conflicts] == [conflict.id]
+
+
 def test_resolve_data_conflict_kept_current(db_session, program):
     conflict = create_data_conflict(
         db_session,
@@ -287,6 +336,23 @@ def test_resolve_data_conflict_kept_current(db_session, program):
         db_session, conflict.id, status=ConflictStatus.RESOLVED_KEPT_CURRENT
     )
     assert resolved.status == ConflictStatus.RESOLVED_KEPT_CURRENT
+    assert resolved.resolved_at is not None
+
+
+def test_resolve_data_conflict_took_proposed(db_session, program):
+    conflict = create_data_conflict(
+        db_session,
+        entity_type=CatalogEntityType.PROGRAM,
+        entity_id=program.id,
+        field_name="canonical_name",
+        current_value="Computer Science",
+        current_verification_status=VerificationStatus.USER_CONFIRMED,
+        proposed_value="Computer Science and Engineering",
+    )
+    resolved = resolve_data_conflict(
+        db_session, conflict.id, status=ConflictStatus.RESOLVED_TOOK_PROPOSED
+    )
+    assert resolved.status == ConflictStatus.RESOLVED_TOOK_PROPOSED
     assert resolved.resolved_at is not None
 
 

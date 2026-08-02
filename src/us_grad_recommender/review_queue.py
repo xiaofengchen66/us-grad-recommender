@@ -12,7 +12,6 @@ review UI will both need, against the schema that already exists.
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import List, Optional
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -59,8 +58,8 @@ def create_review_task(
     entity_type: CatalogEntityType,
     entity_id: int,
     reason: ReviewReason,
-    field_name: Optional[str] = None,
-    assigned_to: Optional[str] = None,
+    field_name: str | None = None,
+    assigned_to: str | None = None,
 ) -> DataReviewTask:
     task = DataReviewTask(
         entity_type=entity_type,
@@ -78,10 +77,10 @@ def create_review_task(
 def list_review_tasks(
     session: Session,
     *,
-    status: Optional[List[ReviewTaskStatus]] = None,
-    entity_type: Optional[CatalogEntityType] = None,
-    reason: Optional[ReviewReason] = None,
-) -> List[DataReviewTask]:
+    status: list[ReviewTaskStatus] | None = None,
+    entity_type: CatalogEntityType | None = None,
+    reason: ReviewReason | None = None,
+) -> list[DataReviewTask]:
     """Defaults to open work (OPEN + IN_REVIEW) — pass an explicit
     ``status`` list (e.g. ``[ReviewTaskStatus.RESOLVED]``) to see anything
     else, including a fully unfiltered query via every status value.
@@ -92,7 +91,12 @@ def list_review_tasks(
         stmt = stmt.where(DataReviewTask.entity_type == entity_type)
     if reason is not None:
         stmt = stmt.where(DataReviewTask.reason == reason)
-    stmt = stmt.order_by(DataReviewTask.created_at)
+    # id as a tiebreaker, not just created_at: Postgres's now() returns
+    # *transaction* start time, so multiple rows inserted in the same
+    # transaction (realistic once the parser pipeline creates several
+    # tasks from one adapter run before committing) get identical
+    # created_at values, and created_at alone wouldn't give a stable order.
+    stmt = stmt.order_by(DataReviewTask.created_at, DataReviewTask.id)
     return list(session.scalars(stmt))
 
 
@@ -101,7 +105,7 @@ def resolve_review_task(
     task_id: int,
     *,
     status: ReviewTaskStatus,
-    resolved_at: Optional[datetime] = None,
+    resolved_at: datetime | None = None,
 ) -> DataReviewTask:
     """``status`` must be RESOLVED or DISMISSED — both are terminal (see
     ``DataReviewTask.resolved_at``'s docstring in ``models/review.py``).
@@ -142,10 +146,10 @@ def create_data_conflict(
     entity_type: CatalogEntityType,
     entity_id: int,
     field_name: str,
-    current_value: Optional[str],
+    current_value: str | None,
     current_verification_status: VerificationStatus,
     proposed_value: str,
-    proposed_source_snapshot_id: Optional[int] = None,
+    proposed_source_snapshot_id: int | None = None,
 ) -> DataConflict:
     conflict = DataConflict(
         entity_type=entity_type,
@@ -165,9 +169,9 @@ def create_data_conflict(
 def list_data_conflicts(
     session: Session,
     *,
-    status: Optional[List[ConflictStatus]] = None,
-    entity_type: Optional[CatalogEntityType] = None,
-) -> List[DataConflict]:
+    status: list[ConflictStatus] | None = None,
+    entity_type: CatalogEntityType | None = None,
+) -> list[DataConflict]:
     """Defaults to open conflicts only — pass an explicit ``status`` list
     to see resolved ones too.
     """
@@ -175,7 +179,9 @@ def list_data_conflicts(
     stmt = select(DataConflict).where(DataConflict.status.in_(statuses))
     if entity_type is not None:
         stmt = stmt.where(DataConflict.entity_type == entity_type)
-    stmt = stmt.order_by(DataConflict.created_at)
+    # See list_review_tasks()'s comment on why id is needed as a
+    # tiebreaker alongside created_at.
+    stmt = stmt.order_by(DataConflict.created_at, DataConflict.id)
     return list(session.scalars(stmt))
 
 
@@ -184,7 +190,7 @@ def resolve_data_conflict(
     conflict_id: int,
     *,
     status: ConflictStatus,
-    resolved_at: Optional[datetime] = None,
+    resolved_at: datetime | None = None,
 ) -> DataConflict:
     """``status`` must be RESOLVED_KEPT_CURRENT or RESOLVED_TOOK_PROPOSED
     — the two terminal outcomes §6's non-regression rule allows. This
