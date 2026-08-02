@@ -165,6 +165,17 @@ def test_resolve_review_task_sets_status_and_resolved_at(db_session, program):
     assert resolved.resolved_at == fixed_time
 
 
+def test_resolve_review_task_defaults_resolved_at_to_now(db_session, program):
+    task = create_review_task(
+        db_session,
+        entity_type=CatalogEntityType.PROGRAM,
+        entity_id=program.id,
+        reason=ReviewReason.FIRST_SEEN,
+    )
+    resolved = resolve_review_task(db_session, task.id, status=ReviewTaskStatus.RESOLVED)
+    assert resolved.resolved_at is not None
+
+
 def test_resolve_review_task_rejects_non_terminal_status(db_session, program):
     task = create_review_task(
         db_session,
@@ -238,6 +249,30 @@ def test_list_data_conflicts_defaults_to_open_only(db_session, program):
     assert [c.id for c in conflicts] == [open_conflict.id]
 
 
+def test_list_data_conflicts_filters_by_entity_type(db_session, program):
+    program_conflict = create_data_conflict(
+        db_session,
+        entity_type=CatalogEntityType.PROGRAM,
+        entity_id=program.id,
+        field_name="canonical_name",
+        current_value="Computer Science",
+        current_verification_status=VerificationStatus.USER_CONFIRMED,
+        proposed_value="Computer Science and Engineering",
+    )
+    create_data_conflict(
+        db_session,
+        entity_type=CatalogEntityType.ACADEMIC_UNIT,
+        entity_id=program.academic_unit_id,
+        field_name="name",
+        current_value="Department of Computer Science",
+        current_verification_status=VerificationStatus.USER_CONFIRMED,
+        proposed_value="School of Computer Science",
+    )
+
+    conflicts = list_data_conflicts(db_session, entity_type=CatalogEntityType.PROGRAM)
+    assert [c.id for c in conflicts] == [program_conflict.id]
+
+
 def test_resolve_data_conflict_kept_current(db_session, program):
     conflict = create_data_conflict(
         db_session,
@@ -287,3 +322,17 @@ def test_resolve_data_conflict_raises_on_double_resolve(db_session, program):
     resolve_data_conflict(db_session, conflict.id, status=ConflictStatus.RESOLVED_KEPT_CURRENT)
     with pytest.raises(DataConflictAlreadyResolvedError):
         resolve_data_conflict(db_session, conflict.id, status=ConflictStatus.RESOLVED_TOOK_PROPOSED)
+
+
+def test_create_review_task_does_not_validate_entity_id_exists(db_session):
+    # entity_id is intentionally not a real FK (models/review.py's
+    # CatalogEntityType docstring: "the database cannot enforce it
+    # directly") — this makes that permissiveness an explicit, asserted
+    # contract rather than an implicit gap nobody noticed.
+    task = create_review_task(
+        db_session,
+        entity_type=CatalogEntityType.PROGRAM,
+        entity_id=999999999,
+        reason=ReviewReason.FIRST_SEEN,
+    )
+    assert task.entity_id == 999999999

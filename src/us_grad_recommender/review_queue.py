@@ -109,13 +109,21 @@ def resolve_review_task(
     re-resolving it, since a second resolution attempt on the same task
     almost always signals a caller bug (double-submit, stale task list)
     rather than an intentional action.
+
+    Takes a row lock (``SELECT ... FOR UPDATE``) before checking status:
+    without it, two concurrent callers resolving the same task (e.g. two
+    reviewers double-clicking "resolve" in a future review UI) could both
+    read a non-terminal status under READ COMMITTED and both proceed,
+    silently defeating the not-a-caller-bug guarantee this function's
+    docstring advertises. No concurrent caller exists yet, but this is
+    cheap to get right now rather than revisit later.
     """
     if status not in _TERMINAL_TASK_STATUSES:
         raise ValueError(
             "resolve_review_task() requires a terminal status "
             f"(RESOLVED or DISMISSED), got {status!r}"
         )
-    task = session.get(DataReviewTask, task_id)
+    task = session.get(DataReviewTask, task_id, with_for_update=True)
     if task is None:
         raise ReviewTaskNotFoundError(f"No DataReviewTask with id={task_id}")
     if task.status in _TERMINAL_TASK_STATUSES:
@@ -185,13 +193,17 @@ def resolve_data_conflict(
     caller's responsibility — this module doesn't know how to interpret
     ``field_name``/``proposed_value`` for the six different entity types
     in ``CatalogEntityType``, that's the parser pipeline's job.
+
+    Takes a row lock (``SELECT ... FOR UPDATE``) before checking status —
+    same concurrent-double-resolve concern and rationale as
+    ``resolve_review_task``.
     """
     if status not in _TERMINAL_CONFLICT_STATUSES:
         raise ValueError(
             "resolve_data_conflict() requires a terminal status "
             f"(RESOLVED_KEPT_CURRENT or RESOLVED_TOOK_PROPOSED), got {status!r}"
         )
-    conflict = session.get(DataConflict, conflict_id)
+    conflict = session.get(DataConflict, conflict_id, with_for_update=True)
     if conflict is None:
         raise DataConflictNotFoundError(f"No DataConflict with id={conflict_id}")
     if conflict.status in _TERMINAL_CONFLICT_STATUSES:
