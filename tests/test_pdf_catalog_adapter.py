@@ -55,6 +55,17 @@ def encrypted_biology_page() -> bytes:
 
 
 @pytest.fixture()
+def two_program_pages() -> bytes:
+    # Real 2-page PDF: Biology (page 41) followed by Computer Science
+    # (page 50) of the actual 209-page catalog, concatenated. Exists to
+    # prove page-level provenance and list-position pairing actually work
+    # across multiple pages in one document — single-page fixtures can't
+    # catch a bug like "extract_degrees() forgot the #page= anchor" (found
+    # in review) since page_index is always 0 there.
+    return _load("aamu_two_program_pages.pdf")
+
+
+@pytest.fixture()
 def wrong_password_biology_page() -> bytes:
     # Same real page again, but encrypted with a real, non-empty password
     # this adapter's decrypt("") attempt cannot satisfy — a plausible
@@ -158,7 +169,9 @@ def test_extract_programs_returns_empty_for_non_pdf_bytes():
 def test_extract_degrees_from_real_biology_page(biology_page):
     candidates = PdfCatalogAdapter().extract_degrees(CATALOG_URL, biology_page)
     assert candidates == [
-        RawDegreeCandidate(raw_degree_name="Master of Science", source_url=CATALOG_URL)
+        RawDegreeCandidate(
+            raw_degree_name="Master of Science", source_url=f"{CATALOG_URL}#page=1"
+        )
     ]
 
 
@@ -169,18 +182,22 @@ def test_extract_degrees_returns_empty_for_ordinary_prose_page(policy_prose_page
 def test_extract_requirements_splits_real_biology_page_into_sections(biology_page):
     candidates = PdfCatalogAdapter().extract_requirements(CATALOG_URL, biology_page)
     labels = [c.section_label for c in candidates]
+    # section_label preserves the real PDF's authored all-caps case rather
+    # than title-casing it — case is presentation, not something this
+    # adapter should be interpreting (see extract_requirements()'s
+    # docstring).
     assert labels == [
-        "Mission Statement",
-        "Admission Requirements",
-        "Policy Statement",
-        "Degree Requirements",
+        "MISSION STATEMENT",
+        "ADMISSION REQUIREMENTS",
+        "POLICY STATEMENT",
+        "DEGREE REQUIREMENTS",
     ]
 
-    admission = next(c for c in candidates if c.section_label == "Admission Requirements")
+    admission = next(c for c in candidates if c.section_label == "ADMISSION REQUIREMENTS")
     assert "Clear evidence of scholastic competence" in admission.raw_text
     assert admission.source_url == f"{CATALOG_URL}#page=1"
 
-    degree = next(c for c in candidates if c.section_label == "Degree Requirements")
+    degree = next(c for c in candidates if c.section_label == "DEGREE REQUIREMENTS")
     assert "30/36 semester hour program" in degree.raw_text
 
 
@@ -191,8 +208,8 @@ def test_extract_requirements_handles_program_description_heading(computer_scien
     # heading set (mirrors CourseLeafAdapter's split-by-any-<h2> approach).
     candidates = PdfCatalogAdapter().extract_requirements(CATALOG_URL, computer_science_page)
     labels = [c.section_label for c in candidates]
-    assert "Program Description" in labels
-    assert "Admission Requirements" in labels
+    assert "PROGRAM DESCRIPTION" in labels
+    assert "ADMISSION REQUIREMENTS" in labels
 
 
 def test_extract_requirements_returns_empty_for_ordinary_prose_page(policy_prose_page):
@@ -201,3 +218,46 @@ def test_extract_requirements_returns_empty_for_ordinary_prose_page(policy_prose
 
 def test_extract_requirements_returns_empty_for_blank_pdf(blank_pdf):
     assert PdfCatalogAdapter().extract_requirements(CATALOG_URL, blank_pdf) == []
+
+
+def test_extract_programs_and_degrees_carry_correct_page_anchor_across_pages(two_program_pages):
+    # Regression test for the found-in-review bug where extract_degrees()
+    # had no page anchor at all — real proof, not just single-page-fixture
+    # proof, since page_index differs per page here.
+    adapter = PdfCatalogAdapter()
+    programs = adapter.extract_programs(CATALOG_URL, two_program_pages)
+    degrees = adapter.extract_degrees(CATALOG_URL, two_program_pages)
+
+    assert [p.name for p in programs] == ["Biology", "Computer Science"]
+    assert [p.program_url for p in programs] == [
+        f"{CATALOG_URL}#page=1",
+        f"{CATALOG_URL}#page=2",
+    ]
+    assert [d.raw_degree_name for d in degrees] == ["Master of Science", "Master of Science"]
+    assert [d.source_url for d in degrees] == [
+        f"{CATALOG_URL}#page=1",
+        f"{CATALOG_URL}#page=2",
+    ]
+
+
+def test_find_programs_and_degrees_returns_every_match_on_a_page():
+    # Synthetic — not from any real institution's page. No page in the
+    # real 209-page AAMU catalog currently has more than one degree
+    # declaration, but nothing about the real pattern this is grounded in
+    # guarantees that (a department can offer both an MS and a PhD), and
+    # silently keeping only the first match would be a real, undetected
+    # data-loss bug once such a page is encountered.
+    lines = [
+        "DEPT OF EXAMPLE, AAMU Graduate Catalog, 2026-2027 ~ 99 ~",
+        "Example Studies",
+        "Master of Arts",
+        "Dr. Example, Program Coordinator",
+        "Example Studies",
+        "Doctor of Philosophy",
+        "Dr. Example, Program Coordinator",
+    ]
+    found = PdfCatalogAdapter._find_programs_and_degrees(lines)
+    assert found == [
+        ("Example Studies", "Master of Arts"),
+        ("Example Studies", "Doctor of Philosophy"),
+    ]

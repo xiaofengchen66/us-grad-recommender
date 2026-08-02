@@ -87,74 +87,88 @@ class PdfCatalogAdapter:
     def extract_programs(self, url: str, content: bytes) -> List[RawProgramCandidate]:
         candidates: List[RawProgramCandidate] = []
         for page_index, lines in self._iter_pages(content):
-            found = self._find_program_and_degree(lines)
-            if found is None:
-                continue
-            name_line, _degree_line = found
-            candidates.append(
-                RawProgramCandidate(
-                    name=name_line,
-                    program_url=f"{url}#page={page_index + 1}",
-                    source_url=url,
+            for name_line, _degree_line in self._find_programs_and_degrees(lines):
+                candidates.append(
+                    RawProgramCandidate(
+                        name=name_line,
+                        program_url=f"{url}#page={page_index + 1}",
+                        source_url=url,
+                    )
                 )
-            )
         return candidates
 
     def extract_degrees(self, url: str, content: bytes) -> List[RawDegreeCandidate]:
         candidates: List[RawDegreeCandidate] = []
-        for _page_index, lines in self._iter_pages(content):
-            found = self._find_program_and_degree(lines)
-            if found is None:
-                continue
-            _name_line, degree_line = found
-            candidates.append(RawDegreeCandidate(raw_degree_name=degree_line, source_url=url))
+        for page_index, lines in self._iter_pages(content):
+            for _name_line, degree_line in self._find_programs_and_degrees(lines):
+                candidates.append(
+                    RawDegreeCandidate(
+                        raw_degree_name=degree_line, source_url=f"{url}#page={page_index + 1}"
+                    )
+                )
         return candidates
 
     @staticmethod
-    def _find_program_and_degree(lines: List[str]) -> Optional[Tuple[str, str]]:
+    def _find_programs_and_degrees(lines: List[str]) -> List[Tuple[str, str]]:
         """Scans one page's lines for the real, verified pattern: a degree
         name on its own line, immediately preceded by the program name.
-        Returns None if no degree line is found, or if the preceding line
-        is the running header rather than a real program name (the "Food
-        Science" PhD case — see module docstring).
+        Returns every match on the page, not just the first — nothing
+        about the real evidence this is grounded in guarantees exactly
+        one program per page (§7.4 covers departments offering more than
+        one degree level), even though no page in the real AAMU catalog
+        currently checked happens to have more than one. Skips a match
+        where the preceding line is the running header rather than a real
+        program name (the "Food Science" PhD case — see module
+        docstring) instead of emitting a fabricated program name.
         """
+        found = []
         for i in range(1, len(lines)):
             if not _DEGREE_LINE.match(lines[i]):
                 continue
             name_line = lines[i - 1]
             if _RUNNING_HEADER_MARKER in name_line:
                 continue
-            return name_line, lines[i]
-        return None
+            found.append((name_line, lines[i]))
+        return found
 
     def extract_requirements(self, url: str, content: bytes) -> List[RawRequirementCandidate]:
+        """Splits each page into raw text blocks by ALL-CAPS heading line
+        (mirrors CourseLeafAdapter's split-by-<h2>). section_label is
+        whitespace-normalized only (the real PDF text layer sometimes
+        renders a double space mid-heading) — case is left as authored
+        (all-caps), not title-cased, since that would be interpreting the
+        source rather than preserving it, unlike CourseLeafAdapter's
+        headings, which really are mixed-case in the HTML.
+        """
         candidates: List[RawRequirementCandidate] = []
         for page_index, lines in self._iter_pages(content):
             current_label: Optional[str] = None
             current_parts: List[str] = []
             for line in lines:
                 if _HEADING_LINE.match(line) and len(line.split()) <= 5:
-                    if current_label is not None and current_parts:
-                        candidates.append(
-                            RawRequirementCandidate(
-                                section_label=" ".join(current_label.split()).title(),
-                                raw_text="\n".join(current_parts),
-                                source_url=f"{url}#page={page_index + 1}",
-                            )
-                        )
+                    section = self._section_or_none(current_label, current_parts, url, page_index)
+                    if section is not None:
+                        candidates.append(section)
                     current_label = line
                     current_parts = []
                 elif current_label is not None:
                     current_parts.append(line)
-            if current_label is not None and current_parts:
-                candidates.append(
-                    RawRequirementCandidate(
-                        section_label=" ".join(current_label.split()).title(),
-                        raw_text="\n".join(current_parts),
-                        source_url=f"{url}#page={page_index + 1}",
-                    )
-                )
+            section = self._section_or_none(current_label, current_parts, url, page_index)
+            if section is not None:
+                candidates.append(section)
         return candidates
+
+    @staticmethod
+    def _section_or_none(
+        label: Optional[str], parts: List[str], url: str, page_index: int
+    ) -> Optional[RawRequirementCandidate]:
+        if label is None or not parts:
+            return None
+        return RawRequirementCandidate(
+            section_label=" ".join(label.split()),
+            raw_text="\n".join(parts),
+            source_url=f"{url}#page={page_index + 1}",
+        )
 
     @staticmethod
     def _reader(content: bytes) -> Optional[PdfReader]:
