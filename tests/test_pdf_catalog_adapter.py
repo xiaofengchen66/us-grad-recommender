@@ -3,8 +3,11 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from pypdf._page import PageObject
 
 from us_grad_recommender.catalog_adapters import (
+    AdapterRegistry,
+    CourseLeafAdapter,
     PdfCatalogAdapter,
     RawDegreeCandidate,
     RawProgramCandidate,
@@ -247,17 +250,64 @@ def test_find_programs_and_degrees_returns_every_match_on_a_page():
     # guarantees that (a department can offer both an MS and a PhD), and
     # silently keeping only the first match would be a real, undetected
     # data-loss bug once such a page is encountered.
-    lines = [
-        "DEPT OF EXAMPLE, AAMU Graduate Catalog, 2026-2027 ~ 99 ~",
-        "Example Studies",
-        "Master of Arts",
-        "Dr. Example, Program Coordinator",
-        "Example Studies",
-        "Doctor of Philosophy",
-        "Dr. Example, Program Coordinator",
+    numbered_lines = [
+        (98, "DEPT OF EXAMPLE, AAMU Graduate Catalog, 2026-2027 ~ 99 ~"),
+        (98, "Example Studies"),
+        (98, "Master of Arts"),
+        (98, "Dr. Example, Program Coordinator"),
+        (98, "Example Studies"),
+        (98, "Doctor of Philosophy"),
+        (98, "Dr. Example, Program Coordinator"),
     ]
-    found = PdfCatalogAdapter._find_programs_and_degrees(lines)
+    found = PdfCatalogAdapter._find_programs_and_degrees(numbered_lines)
     assert found == [
-        ("Example Studies", "Master of Arts"),
-        ("Example Studies", "Doctor of Philosophy"),
+        (98, "Example Studies", "Master of Arts"),
+        (98, "Example Studies", "Doctor of Philosophy"),
     ]
+
+
+def test_find_programs_and_degrees_matches_across_a_page_boundary():
+    # Synthetic — exercises the real gap found in review: a program's
+    # name/degree pair split by a page break (name on the last line of
+    # one page, degree as the first line of the next) must still match.
+    # Not observed in the real AAMU document (verified directly: zero
+    # such splits across all 209 pages), but nothing about a PDF's layout
+    # guarantees it can't happen, e.g. in a different institution's PDF.
+    numbered_lines = [
+        (5, "Example Studies"),
+        (6, "Master of Arts"),
+    ]
+    found = PdfCatalogAdapter._find_programs_and_degrees(numbered_lines)
+    assert found == [(6, "Example Studies", "Master of Arts")]
+
+
+def test_extraction_survives_a_page_that_fails_to_extract_text(biology_page, monkeypatch):
+    # pypdf is documented to occasionally raise on a malformed content
+    # stream or unusual embedded font on a single page. Simulated via
+    # monkeypatch rather than a hand-corrupted PDF fixture, since reliably
+    # constructing bytes that pass PdfReader() construction but fail only
+    # on extract_text() isn't something to fabricate a claim about being
+    # "real" — this tests the defensive code path directly.
+    def _raise(self, *args, **kwargs):
+        raise RuntimeError("simulated malformed content stream")
+
+    monkeypatch.setattr(PageObject, "extract_text", _raise)
+
+    adapter = PdfCatalogAdapter()
+    assert adapter.extract_programs(CATALOG_URL, biology_page) == []
+    assert adapter.extract_degrees(CATALOG_URL, biology_page) == []
+    assert adapter.extract_requirements(CATALOG_URL, biology_page) == []
+    assert adapter.has_usable_text_layer(biology_page) is False
+
+
+def test_pdf_adapter_through_registry_matches_pdf_not_html(biology_page):
+    registry = AdapterRegistry([CourseLeafAdapter(), PdfCatalogAdapter()])
+    adapter = registry.detect(CATALOG_URL, biology_page)
+    assert adapter is not None
+    assert adapter.name == "pdf"
+
+    html_adapter = registry.detect(
+        "https://catalog.utexas.edu/", b'<html><script src="/js/courseleaf.js"></script></html>'
+    )
+    assert html_adapter is not None
+    assert html_adapter.name == "courseleaf"

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 import re
+from itertools import islice
 from typing import Iterator, List, Optional, Tuple
 
 from pypdf import PasswordType, PdfReader
@@ -78,57 +79,62 @@ class PdfCatalogAdapter:
         manual-entry review task per §14 decision 4, instead of every
         adapter needing its own ad hoc way to signal "found nothing".
         """
-        reader = self._reader(content)
-        if reader is None:
-            return False
-        sample = reader.pages[: min(5, len(reader.pages))]
-        return any(page.extract_text().strip() for page in sample)
+        first_pages = islice(self._iter_pages(content), 5)
+        return any(lines for _page_index, lines in first_pages)
 
     def extract_programs(self, url: str, content: bytes) -> List[RawProgramCandidate]:
-        candidates: List[RawProgramCandidate] = []
-        for page_index, lines in self._iter_pages(content):
-            for name_line, _degree_line in self._find_programs_and_degrees(lines):
-                candidates.append(
-                    RawProgramCandidate(
-                        name=name_line,
-                        program_url=f"{url}#page={page_index + 1}",
-                        source_url=url,
-                    )
-                )
-        return candidates
+        numbered_lines = list(self._iter_lines(content))
+        return [
+            RawProgramCandidate(
+                name=name_line,
+                program_url=f"{url}#page={page_index + 1}",
+                source_url=url,
+            )
+            for page_index, name_line, _degree_line in self._find_programs_and_degrees(
+                numbered_lines
+            )
+        ]
 
     def extract_degrees(self, url: str, content: bytes) -> List[RawDegreeCandidate]:
-        candidates: List[RawDegreeCandidate] = []
-        for page_index, lines in self._iter_pages(content):
-            for _name_line, degree_line in self._find_programs_and_degrees(lines):
-                candidates.append(
-                    RawDegreeCandidate(
-                        raw_degree_name=degree_line, source_url=f"{url}#page={page_index + 1}"
-                    )
-                )
-        return candidates
+        numbered_lines = list(self._iter_lines(content))
+        return [
+            RawDegreeCandidate(
+                raw_degree_name=degree_line, source_url=f"{url}#page={page_index + 1}"
+            )
+            for page_index, _name_line, degree_line in self._find_programs_and_degrees(
+                numbered_lines
+            )
+        ]
 
     @staticmethod
-    def _find_programs_and_degrees(lines: List[str]) -> List[Tuple[str, str]]:
-        """Scans one page's lines for the real, verified pattern: a degree
-        name on its own line, immediately preceded by the program name.
-        Returns every match on the page, not just the first — nothing
-        about the real evidence this is grounded in guarantees exactly
-        one program per page (§7.4 covers departments offering more than
-        one degree level), even though no page in the real AAMU catalog
-        currently checked happens to have more than one. Skips a match
-        where the preceding line is the running header rather than a real
-        program name (the "Food Science" PhD case — see module
-        docstring) instead of emitting a fabricated program name.
+    def _find_programs_and_degrees(
+        numbered_lines: List[Tuple[int, str]],
+    ) -> List[Tuple[int, str, str]]:
+        """Scans the *whole document's* flattened (page_index, line)
+        stream — not one page at a time — for the real, verified pattern:
+        a degree name on its own line, immediately preceded by the
+        program name. Scanning across page boundaries (rather than
+        resetting per page) matters because nothing about a PDF's layout
+        guarantees a program's name/degree pair can't be split by a page
+        break, even though zero such splits exist in the real 209-page
+        AAMU catalog this is verified against (checked directly, not
+        assumed safe). Returns every match found, not just the first per
+        page — nothing guarantees exactly one program per page either
+        (§7.4 covers departments offering more than one degree level),
+        even though no real AAMU page currently has more than one. Skips
+        a match where the preceding line is the running header rather
+        than a real program name (the "Food Science" PhD case — see
+        module docstring) instead of emitting a fabricated program name.
         """
         found = []
-        for i in range(1, len(lines)):
-            if not _DEGREE_LINE.match(lines[i]):
+        for i in range(1, len(numbered_lines)):
+            page_index, line = numbered_lines[i]
+            if not _DEGREE_LINE.match(line):
                 continue
-            name_line = lines[i - 1]
+            _prev_page_index, name_line = numbered_lines[i - 1]
             if _RUNNING_HEADER_MARKER in name_line:
                 continue
-            found.append((name_line, lines[i]))
+            found.append((page_index, name_line, line))
         return found
 
     def extract_requirements(self, url: str, content: bytes) -> List[RawRequirementCandidate]:
@@ -200,8 +206,22 @@ class PdfCatalogAdapter:
         if reader is None:
             return
         for page_index, page in enumerate(reader.pages):
-            text = page.extract_text()
+            try:
+                text = page.extract_text()
+            except Exception:
+                # pypdf is documented to occasionally raise on a
+                # malformed content stream or unusual embedded font on a
+                # single page. One bad page must not crash extraction of
+                # the whole document — same "fail the unit, not the
+                # batch" spirit as the decrypt() handling above, just
+                # with the page as the unit instead of the whole PDF.
+                continue
             lines = [ln.strip() for ln in text.split("\n")]
             lines = [ln for ln in lines if ln]
             if lines:
                 yield page_index, lines
+
+    def _iter_lines(self, content: bytes) -> Iterator[Tuple[int, str]]:
+        for page_index, lines in self._iter_pages(content):
+            for line in lines:
+                yield page_index, line
