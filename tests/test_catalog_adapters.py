@@ -21,22 +21,22 @@ REQUIREMENTS_URL = (
 )
 
 
-def _load(name: str) -> str:
-    return (FIXTURES / name).read_text()
+def _load(name: str) -> bytes:
+    return (FIXTURES / name).read_bytes()
 
 
 @pytest.fixture()
-def listing_html() -> str:
+def listing_html() -> bytes:
     return _load("ut_austin_natural_sciences_listing.html")
 
 
 @pytest.fixture()
-def program_html() -> str:
+def program_html() -> bytes:
     return _load("ut_austin_computer_science_program.html")
 
 
 @pytest.fixture()
-def requirements_html() -> str:
+def requirements_html() -> bytes:
     return _load("ut_austin_computer_science_degree_requirements.html")
 
 
@@ -45,7 +45,7 @@ def test_detect_matches_real_courseleaf_markup(listing_html):
 
 
 def test_detect_rejects_non_courseleaf_html():
-    assert CourseLeafAdapter().detect("https://example.edu/", "<html></html>") is False
+    assert CourseLeafAdapter().detect("https://example.edu/", b"<html></html>") is False
 
 
 def test_extract_programs_from_real_listing_page(listing_html):
@@ -71,7 +71,7 @@ def test_extract_programs_excludes_non_program_entries(listing_html):
 
 def test_extract_programs_returns_empty_list_when_no_textcontainer():
     candidates = CourseLeafAdapter().extract_programs(
-        "https://example.edu/", "<html><body></body></html>"
+        "https://example.edu/", b"<html><body></body></html>"
     )
     assert candidates == []
 
@@ -88,7 +88,7 @@ def test_extract_degrees_from_real_program_page(program_html):
 
 
 def test_extract_degrees_tolerates_style_attribute_formatting_variants():
-    html = """
+    html = b"""
     <div id="textcontainer" class="page_content">
     <p style="text-align: center;"><em>Master of Arts in Testing</em></p>
     </div>
@@ -155,7 +155,7 @@ def test_extract_requirements_preserves_table_row_and_cell_boundaries():
     # the real "Graduate Studies Committee" table trimmed out of
     # ut_austin_computer_science_program.html) without asserting anything
     # about an actual school's curriculum.
-    html = """
+    html = b"""
     <div id="textcontainer" class="page_content">
     <h2 name="text">Required Courses</h2>
     <table class="cldatatable">
@@ -175,27 +175,27 @@ def test_extract_requirements_preserves_table_row_and_cell_boundaries():
 
 def test_extract_degrees_returns_empty_list_when_no_textcontainer():
     candidates = CourseLeafAdapter().extract_degrees(
-        "https://example.edu/", "<html><body></body></html>"
+        "https://example.edu/", b"<html><body></body></html>"
     )
     assert candidates == []
 
 
 def test_extract_degrees_returns_empty_list_when_no_centered_banner():
-    html = '<div id="textcontainer" class="page_content"><p>No banner here.</p></div>'
+    html = b'<div id="textcontainer" class="page_content"><p>No banner here.</p></div>'
     assert CourseLeafAdapter().extract_degrees("https://example.edu/", html) == []
 
 
 def test_extract_degrees_returns_empty_list_when_banner_has_no_em():
     html = (
-        '<div id="textcontainer" class="page_content">'
-        '<p style="text-align:center">No emphasis tag here.</p></div>'
+        b'<div id="textcontainer" class="page_content">'
+        b'<p style="text-align:center">No emphasis tag here.</p></div>'
     )
     assert CourseLeafAdapter().extract_degrees("https://example.edu/", html) == []
 
 
 def test_extract_requirements_returns_empty_list_when_no_textcontainer():
     candidates = CourseLeafAdapter().extract_requirements(
-        "https://example.edu/", "<html><body></body></html>"
+        "https://example.edu/", b"<html><body></body></html>"
     )
     assert candidates == []
 
@@ -209,7 +209,7 @@ def test_adapter_registry_detects_courseleaf_first_match(listing_html):
 
 def test_adapter_registry_returns_none_when_nothing_matches():
     registry = AdapterRegistry([CourseLeafAdapter()])
-    assert registry.detect("https://example.edu/", "<html></html>") is None
+    assert registry.detect("https://example.edu/", b"<html></html>") is None
 
 
 class _AlwaysMatchStubAdapter:
@@ -220,16 +220,16 @@ class _AlwaysMatchStubAdapter:
 
     name = "always-match-stub"
 
-    def detect(self, url: str, html: str) -> bool:
+    def detect(self, url: str, content: bytes) -> bool:
         return True
 
-    def extract_programs(self, url: str, html: str):
+    def extract_programs(self, url: str, content: bytes):
         return []
 
-    def extract_degrees(self, url: str, html: str):
+    def extract_degrees(self, url: str, content: bytes):
         return []
 
-    def extract_requirements(self, url: str, html: str):
+    def extract_requirements(self, url: str, content: bytes):
         return []
 
 

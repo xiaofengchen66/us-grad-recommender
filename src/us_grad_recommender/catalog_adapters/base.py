@@ -41,22 +41,27 @@ class RawRequirementCandidate:
 class CatalogAdapter(Protocol):
     """Expands ``FULL_HANDOFF.md`` §5 / ``PHASE_2_CATALOG_DESIGN.md`` §9.
 
-    §9's sketch takes only ``html`` for the ``extract_*`` methods; here
-    they also take ``url``, since every ``Raw*Candidate`` must carry a
-    ``source_url`` (§0's raw-evidence-traceable-to-source principle) and
-    relative links on a listing page can't be resolved to absolute program
-    URLs without knowing the page they came from.
+    §9's sketch takes ``html: str`` for the ``extract_*`` methods; this
+    takes ``url`` too (added in the CourseLeafAdapter PR — every
+    ``Raw*Candidate`` needs a ``source_url`` per §0's provenance
+    principle, and relative links can't be resolved without the page URL)
+    and ``content: bytes`` instead of ``html: str`` (added here, for
+    ``PdfCatalogAdapter``). §14 decision 4 describes ``PdfCatalogAdapter``
+    as itself "attempting text-layer extraction" from a PDF — that only
+    works if the adapter receives the raw fetched bytes, not a pre-decoded
+    string. HTML-based adapters (``CourseLeafAdapter``) just decode bytes
+    to text as their first step; nothing about their parsing logic changes.
     """
 
     name: str
 
-    def detect(self, url: str, html: str) -> bool: ...
+    def detect(self, url: str, content: bytes) -> bool: ...
 
-    def extract_programs(self, url: str, html: str) -> List[RawProgramCandidate]: ...
+    def extract_programs(self, url: str, content: bytes) -> List[RawProgramCandidate]: ...
 
-    def extract_degrees(self, url: str, html: str) -> List[RawDegreeCandidate]: ...
+    def extract_degrees(self, url: str, content: bytes) -> List[RawDegreeCandidate]: ...
 
-    def extract_requirements(self, url: str, html: str) -> List[RawRequirementCandidate]: ...
+    def extract_requirements(self, url: str, content: bytes) -> List[RawRequirementCandidate]: ...
 
 
 class AdapterRegistry:
@@ -65,8 +70,8 @@ class AdapterRegistry:
     def __init__(self, adapters: List[CatalogAdapter]):
         self._adapters = adapters
 
-    def detect(self, url: str, html: str) -> Optional[CatalogAdapter]:
+    def detect(self, url: str, content: bytes) -> Optional[CatalogAdapter]:
         for adapter in self._adapters:
-            if adapter.detect(url, html):
+            if adapter.detect(url, content):
                 return adapter
         return None
