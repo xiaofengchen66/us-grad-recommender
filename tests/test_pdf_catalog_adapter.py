@@ -55,6 +55,19 @@ def encrypted_biology_page() -> bytes:
 
 
 @pytest.fixture()
+def wrong_password_biology_page() -> bytes:
+    # Same real page again, but encrypted with a real, non-empty password
+    # this adapter's decrypt("") attempt cannot satisfy — a plausible
+    # real-world case for a second institution's PDF (this module's own
+    # top comment says extract_*() heuristics are AAMU-specific and
+    # unverified beyond it). Regression fixture for the found-in-review
+    # bug where an unchecked decrypt() result let a still-encrypted
+    # reader through to extract_text(), which raises
+    # FileNotDecryptedError instead of failing gracefully.
+    return _load("aamu_biology_program_wrong_password.pdf")
+
+
+@pytest.fixture()
 def blank_pdf() -> bytes:
     # Synthetic — a genuinely blank PDF page, not from any institution.
     # Exists only to exercise the no-usable-text-layer path (§14
@@ -117,6 +130,25 @@ def test_extract_programs_works_on_encrypted_pdf(encrypted_biology_page):
             source_url=CATALOG_URL,
         )
     ]
+
+
+def test_extract_programs_returns_empty_for_wrong_password_pdf(wrong_password_biology_page):
+    # Must fail gracefully (empty list), not raise FileNotDecryptedError.
+    assert PdfCatalogAdapter().extract_programs(CATALOG_URL, wrong_password_biology_page) == []
+
+
+def test_extract_degrees_returns_empty_for_wrong_password_pdf(wrong_password_biology_page):
+    assert PdfCatalogAdapter().extract_degrees(CATALOG_URL, wrong_password_biology_page) == []
+
+
+def test_extract_requirements_returns_empty_for_wrong_password_pdf(wrong_password_biology_page):
+    assert (
+        PdfCatalogAdapter().extract_requirements(CATALOG_URL, wrong_password_biology_page) == []
+    )
+
+
+def test_has_usable_text_layer_false_for_wrong_password_pdf(wrong_password_biology_page):
+    assert PdfCatalogAdapter().has_usable_text_layer(wrong_password_biology_page) is False
 
 
 def test_extract_programs_returns_empty_for_non_pdf_bytes():

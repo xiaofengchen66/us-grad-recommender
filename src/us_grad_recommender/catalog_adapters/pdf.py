@@ -4,7 +4,7 @@ import io
 import re
 from typing import Iterator, List, Optional, Tuple
 
-from pypdf import PdfReader
+from pypdf import PasswordType, PdfReader
 from pypdf.errors import PdfReadError
 
 from us_grad_recommender.catalog_adapters.base import (
@@ -87,35 +87,45 @@ class PdfCatalogAdapter:
     def extract_programs(self, url: str, content: bytes) -> List[RawProgramCandidate]:
         candidates: List[RawProgramCandidate] = []
         for page_index, lines in self._iter_pages(content):
-            for i in range(1, len(lines)):
-                if not _DEGREE_LINE.match(lines[i]):
-                    continue
-                name_line = lines[i - 1]
-                if _RUNNING_HEADER_MARKER in name_line:
-                    # No real program-name line on this page (see the
-                    # "Food Science" PhD case above) — skip rather than
-                    # emit the running header as a fake program name.
-                    continue
-                candidates.append(
-                    RawProgramCandidate(
-                        name=name_line,
-                        program_url=f"{url}#page={page_index + 1}",
-                        source_url=url,
-                    )
+            found = self._find_program_and_degree(lines)
+            if found is None:
+                continue
+            name_line, _degree_line = found
+            candidates.append(
+                RawProgramCandidate(
+                    name=name_line,
+                    program_url=f"{url}#page={page_index + 1}",
+                    source_url=url,
                 )
-                break
+            )
         return candidates
 
     def extract_degrees(self, url: str, content: bytes) -> List[RawDegreeCandidate]:
         candidates: List[RawDegreeCandidate] = []
         for _page_index, lines in self._iter_pages(content):
-            for i in range(1, len(lines)):
-                if _DEGREE_LINE.match(lines[i]) and _RUNNING_HEADER_MARKER not in lines[i - 1]:
-                    candidates.append(
-                        RawDegreeCandidate(raw_degree_name=lines[i], source_url=url)
-                    )
-                    break
+            found = self._find_program_and_degree(lines)
+            if found is None:
+                continue
+            _name_line, degree_line = found
+            candidates.append(RawDegreeCandidate(raw_degree_name=degree_line, source_url=url))
         return candidates
+
+    @staticmethod
+    def _find_program_and_degree(lines: List[str]) -> Optional[Tuple[str, str]]:
+        """Scans one page's lines for the real, verified pattern: a degree
+        name on its own line, immediately preceded by the program name.
+        Returns None if no degree line is found, or if the preceding line
+        is the running header rather than a real program name (the "Food
+        Science" PhD case — see module docstring).
+        """
+        for i in range(1, len(lines)):
+            if not _DEGREE_LINE.match(lines[i]):
+                continue
+            name_line = lines[i - 1]
+            if _RUNNING_HEADER_MARKER in name_line:
+                continue
+            return name_line, lines[i]
+        return None
 
     def extract_requirements(self, url: str, content: bytes) -> List[RawRequirementCandidate]:
         candidates: List[RawRequirementCandidate] = []
@@ -155,7 +165,18 @@ class PdfCatalogAdapter:
                 # encrypted with an empty user password — a common
                 # copy-restriction pattern that still allows normal
                 # reading. This is a no-op on a non-encrypted PDF.
-                reader.decrypt("")
+                #
+                # decrypt()'s return value must be checked: a PDF
+                # encrypted with a real, unknown password (plausible for
+                # a second real institution — see this module's top
+                # comment on generalizing beyond AAMU) leaves the reader
+                # still encrypted. Every downstream .extract_text() call
+                # raises FileNotDecryptedError in that case, which is not
+                # caught here — so an unchecked decrypt() would crash the
+                # caller instead of the documented "return empty/False"
+                # fallback behavior.
+                if reader.decrypt("") == PasswordType.NOT_DECRYPTED:
+                    return None
             return reader
         except (PdfReadError, ValueError):
             return None
