@@ -933,8 +933,12 @@ Explicit, not yet scheduled to a specific phase sub-step beyond "Phase
 - [ ] Implement the repository/service-level deletion restriction
   described in §12 (block raw/bulk deletes on catalog tables outside an
   approved path).
-- [ ] Implement `data_review_task` creation on `uq_program_identity`
-  collisions (§11) — currently only specified, not built.
+- [x] Implement `data_review_task` creation on `uq_program_identity`
+  collisions (§11) — done in `parser_pipeline.ingest_program_degrees()`
+  (Phase 2.2B): a proactive existence check, with the unique-constraint
+  `IntegrityError` caught as a defensive fallback for a genuine race,
+  both routed to a `POSSIBLE_DUPLICATE` review task pointing at the real
+  existing row.
 - [ ] Implement the snapshot refresh/versioning workflow described in
   §5.1/§6 (insert-new-snapshot-and-repoint, never delete/modify).
 - [ ] Design (not just concept-list) the program/track-level visa
@@ -953,3 +957,20 @@ Explicit, not yet scheduled to a specific phase sub-step beyond "Phase
   online/campus offering be a separate Program?" ambiguous case (§7.2) —
   it's specified as "must create a review task," but the task's exact
   shape/fields aren't designed yet.
+- [ ] `parser_pipeline.ingest_program_degrees()` (Phase 2.2B) is
+  insert-only — re-running it for a program already in the table (a
+  routine §6 re-crawl, not just an adapter bug) creates a fresh
+  `POSSIBLE_DUPLICATE` review task every cycle instead of refreshing
+  `last_seen_snapshot_id`/`last_verified_at` on the existing row. A
+  refresh path needs designing before this gets wired into any recurring
+  re-crawl job. Related: it also doesn't filter existing-program matches
+  by `status`, so a discontinued program (§12) would be flagged as a
+  duplicate rather than considered for revival — §12 doesn't resolve
+  what "rediscovering a discontinued program" should do either.
+- [ ] `parser_pipeline._DEGREE_TYPE_TABLE` maps "Education Specialist" to
+  `DegreeLevel.OTHER` rather than `CERTIFICATE` — a real post-master's,
+  pre-doctoral credential that doesn't fit `CERTIFICATE`'s usual
+  short/non-degree connotation. Reasonable as a first call, but not
+  previously tracked as a taxonomy decision anywhere in this doc; noting
+  it here for visibility alongside the other classification calls in
+  this section.

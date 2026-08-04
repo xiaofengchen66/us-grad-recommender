@@ -14,6 +14,7 @@ from us_grad_recommender.catalog_adapters import (
 )
 from us_grad_recommender.models.catalog import (
     AcademicUnit,
+    DegreeLevel,
     DegreeType,
     EvidenceSource,
     Program,
@@ -153,8 +154,8 @@ def test_ingest_real_pdf_program_creates_program_row(db_session, academic_unit):
 
 
 def test_ingest_reuses_existing_degree_type_row(db_session, academic_unit):
-    program_a = RawProgramCandidate(name="Biology", program_url=None, source_url="https://x/")
-    program_b = RawProgramCandidate(name="Chemistry", program_url=None, source_url="https://x/")
+    program_a = RawProgramCandidate(name="Biology", program_url="https://x/", source_url="https://x/")
+    program_b = RawProgramCandidate(name="Chemistry", program_url="https://x/", source_url="https://x/")
     degrees = [RawDegreeCandidate(raw_degree_name="Master of Science", source_url="https://x/")]
 
     ingest_program_degrees(
@@ -178,7 +179,7 @@ def test_ingest_reuses_existing_degree_type_row(db_session, academic_unit):
 
 def test_ingest_canonicalizes_whitespace_only(db_session, academic_unit):
     program = RawProgramCandidate(
-        name="  Computer   Science  ", program_url=None, source_url="https://x/"
+        name="  Computer   Science  ", program_url="https://x/", source_url="https://x/"
     )
     degrees = [RawDegreeCandidate(raw_degree_name="Master of Science", source_url="https://x/")]
 
@@ -199,7 +200,7 @@ def test_ingest_unmapped_degree_type_creates_no_program_row(db_session, academic
     # Phase 2.2B pilot scoping happened to include a J.D. program) — the
     # exact case this design is meant to route to review rather than
     # guess at.
-    program = RawProgramCandidate(name="Law", program_url=None, source_url="https://x/")
+    program = RawProgramCandidate(name="Law", program_url="https://x/", source_url="https://x/")
     degrees = [RawDegreeCandidate(raw_degree_name="Juris Doctor", source_url="https://x/")]
 
     outcomes = ingest_program_degrees(
@@ -225,7 +226,7 @@ def test_ingest_unmapped_degree_type_creates_no_program_row(db_session, academic
 def test_ingest_duplicate_program_creates_review_task_pointing_at_existing_row(
     db_session, academic_unit
 ):
-    program = RawProgramCandidate(name="Biology", program_url=None, source_url="https://x/")
+    program = RawProgramCandidate(name="Biology", program_url="https://x/", source_url="https://x/")
     degrees = [RawDegreeCandidate(raw_degree_name="Master of Science", source_url="https://x/")]
 
     first_outcomes = ingest_program_degrees(
@@ -266,7 +267,7 @@ def test_ingest_two_degrees_for_same_program_do_not_collide_with_each_other(
     # academic_unit_id + canonical_name but differ on degree_type_code,
     # so uq_program_identity must not treat them as duplicates of each
     # other.
-    program = RawProgramCandidate(name="Physics", program_url=None, source_url="https://x/")
+    program = RawProgramCandidate(name="Physics", program_url="https://x/", source_url="https://x/")
     degrees = [
         RawDegreeCandidate(raw_degree_name="Master of Science", source_url="https://x/"),
         RawDegreeCandidate(raw_degree_name="Doctor of Philosophy", source_url="https://x/"),
@@ -284,7 +285,7 @@ def test_ingest_two_degrees_for_same_program_do_not_collide_with_each_other(
 
 
 def test_ingest_sets_last_seen_snapshot_id_when_supplied(db_session, academic_unit, snapshot):
-    program = RawProgramCandidate(name="Biology", program_url=None, source_url="https://x/")
+    program = RawProgramCandidate(name="Biology", program_url="https://x/", source_url="https://x/")
     degrees = [RawDegreeCandidate(raw_degree_name="Master of Science", source_url="https://x/")]
 
     outcomes = ingest_program_degrees(
@@ -302,7 +303,7 @@ def test_ingest_sets_last_seen_snapshot_id_when_supplied(db_session, academic_un
 def test_ingest_leaves_last_seen_snapshot_id_none_when_omitted(db_session, academic_unit):
     # No live fetch layer exists yet, so this is the realistic call shape
     # today — asserted explicitly so the gap is visible, not implicit.
-    program = RawProgramCandidate(name="Biology", program_url=None, source_url="https://x/")
+    program = RawProgramCandidate(name="Biology", program_url="https://x/", source_url="https://x/")
     degrees = [RawDegreeCandidate(raw_degree_name="Master of Science", source_url="https://x/")]
 
     outcomes = ingest_program_degrees(
@@ -328,7 +329,7 @@ def test_ingest_falls_back_to_integrity_error_on_genuine_race(
     # to report "nothing found" exactly once, while a real colliding
     # Program row already exists in the same transaction, so the
     # IntegrityError path is what actually runs.
-    program = RawProgramCandidate(name="Biology", program_url=None, source_url="https://x/")
+    program = RawProgramCandidate(name="Biology", program_url="https://x/", source_url="https://x/")
     degrees = [RawDegreeCandidate(raw_degree_name="Master of Science", source_url="https://x/")]
 
     first_outcomes = ingest_program_degrees(
@@ -368,3 +369,97 @@ def test_ingest_falls_back_to_integrity_error_on_genuine_race(
     assert outcome.review_task.entity_id == existing_program.id
     # The race must not have created a second Program row.
     assert db_session.query(Program).count() == 1
+
+
+def test_ingest_with_empty_degrees_list_returns_empty_outcomes(db_session, academic_unit):
+    program = RawProgramCandidate(
+        name="Biology", program_url="https://x/", source_url="https://x/"
+    )
+    outcomes = ingest_program_degrees(
+        db_session,
+        academic_unit_id=academic_unit.id,
+        program=program,
+        degrees=[],
+        last_verified_at=TODAY,
+    )
+    assert outcomes == []
+    assert db_session.query(Program).count() == 0
+
+
+def test_ingest_two_identical_degrees_in_one_call_second_is_flagged_duplicate(
+    db_session, academic_unit
+):
+    # A catalog page repeating the same degree line twice is a plausible
+    # real-world case. The second occurrence must hit the proactive
+    # _find_existing_program() check against the first one's already-
+    # flushed row, within the same ingest_program_degrees() call — not
+    # just across two separate calls (which the other duplicate test
+    # covers).
+    program = RawProgramCandidate(
+        name="Biology", program_url="https://x/", source_url="https://x/"
+    )
+    degrees = [
+        RawDegreeCandidate(raw_degree_name="Master of Science", source_url="https://x/"),
+        RawDegreeCandidate(raw_degree_name="Master of Science", source_url="https://x/"),
+    ]
+
+    outcomes = ingest_program_degrees(
+        db_session,
+        academic_unit_id=academic_unit.id,
+        program=program,
+        degrees=degrees,
+        last_verified_at=TODAY,
+    )
+
+    assert len(outcomes) == 2
+    first, second = outcomes
+    assert first.program is not None
+    assert second.program is None
+    assert second.review_task is not None
+    assert second.review_task.reason == ReviewReason.POSSIBLE_DUPLICATE
+    assert second.review_task.entity_id == first.program.id
+    assert db_session.query(Program).count() == 1
+
+
+def test_get_or_create_degree_type_survives_concurrent_first_creation_race(
+    db_session, academic_unit, monkeypatch
+):
+    # Same race-simulation approach as
+    # test_ingest_falls_back_to_integrity_error_on_genuine_race above,
+    # applied to DegreeType's own get-or-create path: another caller
+    # creates the same code for the first time between our get() and our
+    # insert. real_get is unpatched for every code except the one under
+    # test, so DegreeType lookups this pipeline makes for *other* degrees
+    # (none in this test, but future callers) aren't affected.
+    # A real DegreeType("MS") row must already exist *before* the lie —
+    # otherwise the lie causes a normal first-time insert (no collision)
+    # instead of the race this test is actually meant to exercise.
+    db_session.add(DegreeType(code="MS", label="Master of Science", level=DegreeLevel.MASTERS))
+    db_session.commit()
+
+    program = RawProgramCandidate(
+        name="Biology", program_url="https://x/", source_url="https://x/"
+    )
+    degrees = [RawDegreeCandidate(raw_degree_name="Master of Science", source_url="https://x/")]
+
+    real_get_degree_type = parser_pipeline_module._get_degree_type
+    call_count = {"n": 0}
+
+    def _lie_once(session, code):
+        call_count["n"] += 1
+        if call_count["n"] == 1:
+            return None
+        return real_get_degree_type(session, code)
+
+    monkeypatch.setattr(parser_pipeline_module, "_get_degree_type", _lie_once)
+
+    outcomes = ingest_program_degrees(
+        db_session,
+        academic_unit_id=academic_unit.id,
+        program=program,
+        degrees=degrees,
+        last_verified_at=TODAY,
+    )
+    assert outcomes[0].program is not None
+    assert outcomes[0].program.degree_type_code == "MS"
+    assert db_session.query(DegreeType).filter_by(code="MS").count() == 1

@@ -97,14 +97,32 @@ def _match_degree_type(raw_degree_name: str) -> tuple[str, str, DegreeLevel] | N
     return None
 
 
+def _get_degree_type(session: Session, code: str) -> DegreeType | None:
+    return session.get(DegreeType, code)
+
+
 def _get_or_create_degree_type(
     session: Session, code: str, label: str, level: DegreeLevel
 ) -> DegreeType:
-    degree_type = session.get(DegreeType, code)
-    if degree_type is None:
-        degree_type = DegreeType(code=code, label=label, level=level)
-        session.add(degree_type)
-        session.flush()
+    degree_type = _get_degree_type(session, code)
+    if degree_type is not None:
+        return degree_type
+    try:
+        with session.begin_nested():
+            degree_type = DegreeType(code=code, label=label, level=level)
+            session.add(degree_type)
+            session.flush()
+    except IntegrityError:
+        # Same concurrent-first-creation race Program's insert path
+        # guards against (§11 point 3's "never bubble up unhandled"
+        # applies just as much to this table) — a second caller creating
+        # the same code for the first time between our get() and our
+        # insert. Re-fetch the real row rather than raising.
+        degree_type = _get_degree_type(session, code)
+        if degree_type is None:
+            raise RuntimeError(
+                f"IntegrityError on DegreeType insert but no row found for code={code!r}"
+            ) from None
     return degree_type
 
 
@@ -115,6 +133,13 @@ def _canonicalize(name: str) -> str:
 def _find_existing_program(
     session: Session, *, academic_unit_id: int, degree_type_code: str, canonical_name: str
 ) -> Program | None:
+    """Matches on identity only — does not filter by ``Program.status``.
+    A discontinued program (§12's status-based retirement model) is
+    matched and flagged ``POSSIBLE_DUPLICATE`` the same as an active one,
+    rather than being considered for revival. §12 doesn't resolve what
+    "rediscovering a discontinued program" should do, so this doesn't
+    either — disclosed here rather than silently assumed away.
+    """
     stmt = select(Program).where(
         Program.academic_unit_id == academic_unit_id,
         Program.degree_type_code == degree_type_code,
@@ -144,10 +169,19 @@ def ingest_program_degrees(
     source_snapshot_id: int | None = None,
 ) -> list[ProgramIngestOutcome]:
     """One ``Program`` row per matched degree — a department page
-    declaring both an MS and a PhD for the same subject (a real,
-    documented case; see ``catalog_adapters.pdf``'s "Food Science" note)
-    genuinely needs two rows, since ``uq_program_identity`` includes
-    ``degree_type_code``.
+    declaring both an MS and a PhD for the same subject genuinely needs
+    two rows, since ``uq_program_identity`` includes ``degree_type_code``.
+    This is grounded in a real case, not hypothetical: UT Austin's own
+    CS program page declares both "Master of Science in Computer
+    Science" and "Doctor of Philosophy" (see
+    tests/fixtures/courseleaf/ut_austin_computer_science_program.html,
+    exercised directly in
+    tests/test_parser_pipeline.py::test_ingest_real_courseleaf_program_creates_one_row_per_degree).
+    (Earlier revisions of this docstring cited catalog_adapters.pdf's
+    "Food Science" note for this same claim — that was wrong. That note
+    documents a *different* real finding, a PhD line with no program-name
+    line before it, so the candidate is skipped entirely rather than
+    paired with anything.)
 
     ``source_snapshot_id`` is accepted and threaded onto
     ``Program.last_seen_snapshot_id`` even though no caller can supply a
