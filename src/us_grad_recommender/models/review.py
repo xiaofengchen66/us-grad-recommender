@@ -100,9 +100,10 @@ class ParsedDocument(Base):
 
 class DataReviewTask(Base):
     """A queued item for human review, per
-    docs/PHASE_2_CATALOG_DESIGN.md §10/§11. Nothing in this codebase yet
-    creates these rows or acts on them — that's the adapter pipeline and
-    review UI, both out of scope for Phase 2.2A.
+    docs/PHASE_2_CATALOG_DESIGN.md §10/§11. Created by
+    review_queue.create_review_task() and parser_pipeline.py's
+    ingest_program_degrees() (Phase 2.2B) — no review UI acts on these
+    rows yet, that's still out of scope.
     """
 
     __tablename__ = "data_review_tasks"
