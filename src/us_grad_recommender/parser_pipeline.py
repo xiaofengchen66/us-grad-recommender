@@ -50,60 +50,75 @@ from us_grad_recommender.models.common import EntityStatus, VerificationStatus
 from us_grad_recommender.models.review import CatalogEntityType, DataReviewTask, ReviewReason
 from us_grad_recommender.review_queue import create_review_task
 
-# (prefix, code, label, level) — every entry is a literal degree-name
-# string, each backed by a specific committed fixture (cited per entry
-# below), not a guessed/generalized pattern. Matched as a *prefix* (not
-# exact-string) so CourseLeaf's subject-suffixed form ("Master of
-# Science in Computer Science") and AAMU's plain form ("Master of
-# Science") both map to the same MS code — the subject is already
-# captured separately in Program.canonical_name.
+# Every entry is a literal degree-name string, each backed by a specific
+# committed fixture (cited per entry below), not a guessed/generalized
+# pattern.
 #
-# Order only matters if one real string were itself a prefix of another;
-# checked directly against this exact list and none of them are (e.g.
-# "Master of Science" is not a prefix of "Master of Social Work" — they
-# diverge at the 11th character).
-_DEGREE_TYPE_TABLE: list[tuple[str, str, str, DegreeLevel]] = [
+# (match_text, code, label, level, allow_suffix). allow_suffix defaults
+# to False — an *exact* match is required, not a prefix — because prefix
+# matching is unsafe in general: "Master of Arts in Teaching" (a real,
+# distinct U.S. graduate degree, M.A.T., with its own admission/
+# curriculum profile) would otherwise silently match the "Master of
+# Arts" entry and get mis-recorded as a plain MA. Same risk for "Master
+# of Engineering Management" (M.Eng.Mgmt.) against "Master of
+# Engineering". Neither MAT nor MEM has been observed in any fixture, so
+# inventing a rule to tell them apart from a real subject-suffixed name
+# would itself be guessing — instead, only the one entry with *actual*
+# evidence of a suffix variant (Master of Science, both "in Computer
+# Science" and bare-subject forms — see citation below) allows suffix
+# matching; every other entry requires the bare form to match exactly,
+# and anything else (MAT, MEM, or a genuine "Master of Science"
+# subject-suffix case) either matches correctly or falls through to the
+# unmapped-degree-type review path, never a silent misclassification.
+_DEGREE_TYPE_TABLE: list[tuple[str, str, str, DegreeLevel, bool]] = [
     # tests/fixtures/courseleaf/ut_austin_computer_science_program.html,
     # tests/fixtures/pdf/aamu_biology_program.pdf
-    ("Doctor of Philosophy", "PHD", "Doctor of Philosophy", DegreeLevel.DOCTORAL),
-    # tests/fixtures/courseleaf/ut_austin_computer_science_program.html,
-    # tests/fixtures/pdf/aamu_biology_program.pdf,
-    # tests/fixtures/pdf/aamu_computer_science_program.pdf
-    ("Master of Science", "MS", "Master of Science", DegreeLevel.MASTERS),
+    ("Doctor of Philosophy", "PHD", "Doctor of Philosophy", DegreeLevel.DOCTORAL, False),
+    # tests/fixtures/courseleaf/ut_austin_computer_science_program.html
+    # ("Master of Science in Computer Science"),
+    # tests/fixtures/pdf/aamu_biology_program.pdf (bare),
+    # tests/fixtures/pdf/aamu_computer_science_program.pdf (bare) —
+    # real evidence of both bare and subject-suffixed forms, so this is
+    # the one entry where allow_suffix=True is evidence-backed, not
+    # guessed.
+    ("Master of Science", "MS", "Master of Science", DegreeLevel.MASTERS, True),
     # tests/fixtures/pdf/aamu_business_administration_program.pdf
     (
         "Master of Business Administration",
         "MBA",
         "Master of Business Administration",
         DegreeLevel.MASTERS,
+        False,
     ),
     # tests/fixtures/pdf/aamu_education_early_childhood_program.pdf
-    ("Master of Education", "MED", "Master of Education", DegreeLevel.MASTERS),
+    ("Master of Education", "MED", "Master of Education", DegreeLevel.MASTERS, False),
     # tests/fixtures/pdf/aamu_interdisciplinary_studies_program.pdf
-    ("Master of Arts", "MA", "Master of Arts", DegreeLevel.MASTERS),
+    ("Master of Arts", "MA", "Master of Arts", DegreeLevel.MASTERS, False),
     # tests/fixtures/pdf/aamu_public_administration_program.pdf
     (
         "Master of Public Administration",
         "MPA",
         "Master of Public Administration",
         DegreeLevel.MASTERS,
+        False,
     ),
     # tests/fixtures/pdf/aamu_social_work_program.pdf
-    ("Master of Social Work", "MSW", "Master of Social Work", DegreeLevel.MASTERS),
+    ("Master of Social Work", "MSW", "Master of Social Work", DegreeLevel.MASTERS, False),
     # tests/fixtures/pdf/aamu_systems_materiel_engineering_program.pdf
-    ("Master of Engineering", "MENG", "Master of Engineering", DegreeLevel.MASTERS),
+    ("Master of Engineering", "MENG", "Master of Engineering", DegreeLevel.MASTERS, False),
     # tests/fixtures/pdf/aamu_urban_regional_planning_program.pdf
     (
         "Master of Urban and Regional Planning",
         "MURP",
         "Master of Urban and Regional Planning",
         DegreeLevel.MASTERS,
+        False,
     ),
     # tests/fixtures/pdf/aamu_education_specialist_program.pdf — Ed.S. is
     # a real post-master's, pre-doctoral credential, not a "certificate"
     # in the usual (short, non-degree) sense, so OTHER is the honest fit
     # among DegreeLevel's four values, not CERTIFICATE.
-    ("Education Specialist", "EDS", "Education Specialist", DegreeLevel.OTHER),
+    ("Education Specialist", "EDS", "Education Specialist", DegreeLevel.OTHER, False),
 ]
 
 
@@ -115,8 +130,10 @@ def _match_degree_type(raw_degree_name: str) -> tuple[str, str, DegreeLevel] | N
     # LLMFallbackAdapter, both still unbuilt) regressing that isn't
     # something this pipeline should silently depend on.
     stripped = raw_degree_name.strip()
-    for prefix, code, label, level in _DEGREE_TYPE_TABLE:
-        if stripped.startswith(prefix):
+    for text, code, label, level, allow_suffix in _DEGREE_TYPE_TABLE:
+        if stripped == text:
+            return code, label, level
+        if allow_suffix and stripped.startswith(text):
             return code, label, level
     return None
 

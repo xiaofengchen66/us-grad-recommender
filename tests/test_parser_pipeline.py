@@ -312,7 +312,86 @@ def test_ingest_unmapped_degree_type_creates_no_program_row(db_session, academic
     assert outcome.review_task.entity_id == academic_unit.id
     assert outcome.review_task.field_name == "unmapped_degree_type:Juris Doctor program=Law"
 
+
+@pytest.mark.parametrize(
+    "raw_degree_name",
+    [
+        "Master of Arts in Teaching",
+        "Master of Engineering Management",
+    ],
+)
+def test_ingest_does_not_misclassify_a_superstring_of_an_evidenced_degree(
+    db_session, academic_unit, raw_degree_name
+):
+    # Regression test for a real bug caught in review: prefix matching
+    # would have silently matched "Master of Arts in Teaching" against
+    # the bare "Master of Arts" entry (recording it as plain MA) and
+    # "Master of Engineering Management" against "Master of Engineering"
+    # (as plain MENG). MAT and MEM are both real, distinct U.S. graduate
+    # degrees, not subject-suffixed variants of MA/MEng. Neither has been
+    # observed in any fixture, so the correct behavior is the same as any
+    # other unmapped degree type: route to review, don't guess.
+    program = RawProgramCandidate(
+        name="Education", program_url="https://x/", source_url="https://x/"
+    )
+    degrees = [RawDegreeCandidate(raw_degree_name=raw_degree_name, source_url="https://x/")]
+
+    outcomes = ingest_program_degrees(
+        db_session,
+        academic_unit_id=academic_unit.id,
+        program=program,
+        degrees=degrees,
+        last_verified_at=TODAY,
+    )
+
+    assert len(outcomes) == 1
+    outcome = outcomes[0]
+    assert outcome.program is None
+    assert outcome.review_task is not None
+    assert outcome.review_task.reason == ReviewReason.LOW_CONFIDENCE
     assert db_session.query(Program).count() == 0
+
+
+def test_ingest_still_matches_master_of_science_subject_suffix_variants(
+    db_session, academic_unit
+):
+    # Confirms the one legitimate allow_suffix=True case still works
+    # after restricting every other entry to exact-match — both real
+    # variants observed across the CourseLeaf/PDF fixtures. Two distinct
+    # subjects (not the same program twice) so the second isn't flagged
+    # as a duplicate of the first — that's a separate, already-covered
+    # behavior, not what this test is checking.
+    cs_outcomes = ingest_program_degrees(
+        db_session,
+        academic_unit_id=academic_unit.id,
+        program=RawProgramCandidate(
+            name="Computer Science", program_url="https://x/", source_url="https://x/"
+        ),
+        degrees=[
+            RawDegreeCandidate(
+                raw_degree_name="Master of Science in Computer Science", source_url="https://x/"
+            )
+        ],
+        last_verified_at=TODAY,
+    )
+    ee_outcomes = ingest_program_degrees(
+        db_session,
+        academic_unit_id=academic_unit.id,
+        program=RawProgramCandidate(
+            name="Electrical Engineering", program_url="https://x/", source_url="https://x/"
+        ),
+        degrees=[
+            RawDegreeCandidate(
+                raw_degree_name="Master of Science Electrical Engineering", source_url="https://x/"
+            )
+        ],
+        last_verified_at=TODAY,
+    )
+
+    assert cs_outcomes[0].program is not None
+    assert cs_outcomes[0].program.degree_type_code == "MS"
+    assert ee_outcomes[0].program is not None
+    assert ee_outcomes[0].program.degree_type_code == "MS"
 
 
 def test_ingest_duplicate_program_creates_review_task_pointing_at_existing_row(
