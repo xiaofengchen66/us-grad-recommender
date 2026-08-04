@@ -559,3 +559,68 @@ def test_ingest_verification_status_can_be_overridden(db_session, academic_unit)
     )
     assert outcomes[0].program is not None
     assert outcomes[0].program.verification_status == VerificationStatus.NEEDS_REVIEW
+
+
+def test_ingest_accepts_raw_degree_name_at_exact_length_limit(db_session, academic_unit):
+    # 255 is Program.raw_degree_name's column limit — a name of exactly
+    # that length must be accepted, not routed to review (guards against
+    # an off-by-one, > vs >=, in the overlong-name check).
+    raw_degree_name = "Master of Science " + "x" * (255 - len("Master of Science "))
+    assert len(raw_degree_name) == 255
+    program = RawProgramCandidate(
+        name="Biology", program_url="https://x/", source_url="https://x/"
+    )
+    degrees = [RawDegreeCandidate(raw_degree_name=raw_degree_name, source_url="https://x/")]
+
+    outcomes = ingest_program_degrees(
+        db_session,
+        academic_unit_id=academic_unit.id,
+        program=program,
+        degrees=degrees,
+        last_verified_at=TODAY,
+    )
+    assert outcomes[0].program is not None
+    assert outcomes[0].program.raw_degree_name == raw_degree_name
+
+
+def test_ingest_accepts_canonical_name_at_exact_length_limit(db_session, academic_unit):
+    # 500 is Program.canonical_name's column limit.
+    program_name = "x" * 500
+    program = RawProgramCandidate(
+        name=program_name, program_url="https://x/", source_url="https://x/"
+    )
+    degrees = [RawDegreeCandidate(raw_degree_name="Master of Science", source_url="https://x/")]
+
+    outcomes = ingest_program_degrees(
+        db_session,
+        academic_unit_id=academic_unit.id,
+        program=program,
+        degrees=degrees,
+        last_verified_at=TODAY,
+    )
+    assert outcomes[0].program is not None
+    assert outcomes[0].program.canonical_name == program_name
+
+
+def test_ingest_raises_clear_error_for_nonexistent_academic_unit_id(db_session):
+    # academic_unit_id is a real FK on Program (unlike DataReviewTask's
+    # entity_id, which is intentionally not one — see
+    # test_review_queue.py::test_create_review_task_does_not_validate_entity_id_exists).
+    # A nonexistent id triggers a real FK-violation IntegrityError, which
+    # this function's duplicate-handling fallback can't resolve into an
+    # existing row (there isn't one) — verifying it fails loudly with a
+    # clear RuntimeError rather than silently mismapping the error as a
+    # duplicate.
+    program = RawProgramCandidate(
+        name="Biology", program_url="https://x/", source_url="https://x/"
+    )
+    degrees = [RawDegreeCandidate(raw_degree_name="Master of Science", source_url="https://x/")]
+
+    with pytest.raises(RuntimeError, match="no colliding row found"):
+        ingest_program_degrees(
+            db_session,
+            academic_unit_id=999999999,
+            program=program,
+            degrees=degrees,
+            last_verified_at=TODAY,
+        )

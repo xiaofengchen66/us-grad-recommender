@@ -160,8 +160,15 @@ def _find_existing_program(
 
 @dataclass(frozen=True)
 class ProgramIngestOutcome:
-    """One outcome per input ``RawDegreeCandidate`` — exactly one of
-    ``program``/``review_task`` is set, never both, never neither.
+    """One outcome per input ``RawDegreeCandidate``. ``review_task`` is
+    always set — every path, including a successful insert, creates one
+    (§10's no-auto-promotion rule: even a brand-new row needs a
+    ``FIRST_SEEN`` task before it can move past ``PARSED``).
+    ``program`` is set only when a row was actually written; on any
+    review-routed path (unmapped degree type, name too long, duplicate)
+    it's ``None``. Do not assume ``review_task`` implies ``program`` is
+    ``None`` — that only holds for the review-routed paths, not the
+    success path.
     """
 
     degree: RawDegreeCandidate
@@ -260,13 +267,13 @@ def ingest_program_degrees(
             outcomes.append(ProgramIngestOutcome(degree=degree, program=None, review_task=task))
             continue
 
-        code, label, level = match
-        degree_type = _get_or_create_degree_type(session, code, label, level)
-
         if (
             len(degree.raw_degree_name) > _MAX_RAW_DEGREE_NAME_LENGTH
             or len(canonical_name) > _MAX_CANONICAL_NAME_LENGTH
         ):
+            # Checked before _get_or_create_degree_type() below —
+            # deliberately not doing get-or-create work for a row that's
+            # about to be rejected anyway.
             field_name = f"name_too_long:{degree.raw_degree_name} program={program.name}"[:100]
             task = create_review_task(
                 session,
@@ -277,6 +284,9 @@ def ingest_program_degrees(
             )
             outcomes.append(ProgramIngestOutcome(degree=degree, program=None, review_task=task))
             continue
+
+        code, label, level = match
+        degree_type = _get_or_create_degree_type(session, code, label, level)
 
         existing = _find_existing_program(
             session,
