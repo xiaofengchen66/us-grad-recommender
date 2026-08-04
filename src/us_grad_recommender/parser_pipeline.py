@@ -42,7 +42,7 @@ from sqlalchemy.orm import Session
 
 from us_grad_recommender.catalog_adapters import RawDegreeCandidate, RawProgramCandidate
 from us_grad_recommender.models.catalog import DegreeLevel, DegreeType, Program
-from us_grad_recommender.models.common import VerificationStatus
+from us_grad_recommender.models.common import EntityStatus, VerificationStatus
 from us_grad_recommender.models.review import CatalogEntityType, DataReviewTask, ReviewReason
 from us_grad_recommender.review_queue import create_review_task
 
@@ -310,6 +310,15 @@ def ingest_program_degrees(
             raw_degree_name=degree.raw_degree_name,
             canonical_name=canonical_name,
             program_url=program.program_url,
+            # EntityStatus.ACTIVE, not the model's default (UNVERIFIED):
+            # per §6, UNVERIFIED means "doubt about whether this still
+            # exists," the status a program moves to *after* a failed
+            # re-check. A row reaching this line was just successfully
+            # parsed off a live source page — the strongest evidence
+            # available that it's currently active. Leaving this unset
+            # would conflate that with verification_status=PARSED's
+            # separate, correct meaning ("not yet human-reviewed").
+            status=EntityStatus.ACTIVE,
             verification_status=verification_status,
             last_verified_at=last_verified_at,
             last_seen_snapshot_id=source_snapshot_id,

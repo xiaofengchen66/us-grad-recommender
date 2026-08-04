@@ -22,7 +22,7 @@ from us_grad_recommender.models.catalog import (
     SourceType,
     UnitType,
 )
-from us_grad_recommender.models.common import VerificationStatus
+from us_grad_recommender.models.common import EntityStatus, VerificationStatus
 from us_grad_recommender.models.review import CatalogEntityType, ReviewReason
 from us_grad_recommender.models.university import Sector, University
 from us_grad_recommender.parser_pipeline import ingest_program_degrees
@@ -117,6 +117,7 @@ def test_ingest_real_courseleaf_program_creates_one_row_per_degree(db_session, a
     assert ms_outcome.program.canonical_name == "Computer Science"
     assert ms_outcome.program.raw_degree_name == "Master of Science in Computer Science"
     assert ms_outcome.program.verification_status.value == "parsed"
+    assert ms_outcome.program.status == EntityStatus.ACTIVE
     assert ms_outcome.review_task is not None
     assert ms_outcome.review_task.reason == ReviewReason.FIRST_SEEN
     assert ms_outcome.review_task.entity_id == ms_outcome.program.id
