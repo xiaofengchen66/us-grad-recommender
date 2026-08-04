@@ -478,6 +478,55 @@ def test_ingest_with_empty_degrees_list_returns_empty_outcomes(db_session, acade
     assert db_session.query(Program).count() == 0
 
 
+def test_ingest_routes_whitespace_only_program_name_to_review(db_session, academic_unit):
+    program = RawProgramCandidate(
+        name="   ", program_url="https://x/", source_url="https://x/"
+    )
+    degrees = [RawDegreeCandidate(raw_degree_name="Master of Science", source_url="https://x/")]
+
+    outcomes = ingest_program_degrees(
+        db_session,
+        academic_unit_id=academic_unit.id,
+        program=program,
+        degrees=degrees,
+        last_verified_at=TODAY,
+    )
+
+    assert len(outcomes) == 1
+    outcome = outcomes[0]
+    assert outcome.program is None
+    assert outcome.review_task is not None
+    assert outcome.review_task.reason == ReviewReason.LOW_CONFIDENCE
+    assert outcome.review_task.entity_type == CatalogEntityType.ACADEMIC_UNIT
+    assert outcome.review_task.entity_id == academic_unit.id
+    assert db_session.query(Program).count() == 0
+
+
+def test_ingest_matches_degree_type_despite_surrounding_whitespace(db_session, academic_unit):
+    # Both current adapters already strip lines, so this is currently
+    # unreachable via real adapter output — testing the pipeline's own
+    # independent guard directly, not adapter behavior.
+    program = RawProgramCandidate(
+        name="Biology", program_url="https://x/", source_url="https://x/"
+    )
+    degrees = [
+        RawDegreeCandidate(raw_degree_name="  Master of Science  ", source_url="https://x/")
+    ]
+
+    outcomes = ingest_program_degrees(
+        db_session,
+        academic_unit_id=academic_unit.id,
+        program=program,
+        degrees=degrees,
+        last_verified_at=TODAY,
+    )
+    assert outcomes[0].program is not None
+    assert outcomes[0].program.degree_type_code == "MS"
+    # The raw, un-stripped text is still what's stored — matching is
+    # lenient, storage stays verbatim.
+    assert outcomes[0].program.raw_degree_name == "  Master of Science  "
+
+
 def test_ingest_two_identical_degrees_in_one_call_second_is_flagged_duplicate(
     db_session, academic_unit
 ):

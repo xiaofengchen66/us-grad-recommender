@@ -108,8 +108,15 @@ _DEGREE_TYPE_TABLE: list[tuple[str, str, str, DegreeLevel]] = [
 
 
 def _match_degree_type(raw_degree_name: str) -> tuple[str, str, DegreeLevel] | None:
+    # Both current adapters (CourseLeafAdapter, PdfCatalogAdapter)
+    # already strip lines before returning candidates, so stripping here
+    # is currently a no-op — but this function has no independent guard
+    # otherwise, and a future adapter (GenericHtmlAdapter/
+    # LLMFallbackAdapter, both still unbuilt) regressing that isn't
+    # something this pipeline should silently depend on.
+    stripped = raw_degree_name.strip()
     for prefix, code, label, level in _DEGREE_TYPE_TABLE:
-        if raw_degree_name.startswith(prefix):
+        if stripped.startswith(prefix):
             return code, label, level
     return None
 
@@ -273,6 +280,24 @@ def ingest_program_degrees(
     canonical_name = _canonicalize(program.name)
     outcomes = []
     for degree in degrees:
+        if not canonical_name:
+            # An empty/whitespace-only program name is a fundamental
+            # extraction problem, not something to write as a
+            # zero-length canonical_name (NOT NULL doesn't stop an empty
+            # string, but a program with no real name is meaningless
+            # data). Checked before degree-type matching — no point doing
+            # that work for a row with no name either way.
+            field_name = f"empty_program_name:degree={degree.raw_degree_name}"[:100]
+            task = create_review_task(
+                session,
+                entity_type=CatalogEntityType.ACADEMIC_UNIT,
+                entity_id=academic_unit_id,
+                reason=ReviewReason.LOW_CONFIDENCE,
+                field_name=field_name,
+            )
+            outcomes.append(ProgramIngestOutcome(degree=degree, program=None, review_task=task))
+            continue
+
         match = _match_degree_type(degree.raw_degree_name)
         if match is None:
             # field_name is String(100) — truncate defensively so an
