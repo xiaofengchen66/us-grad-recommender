@@ -13,9 +13,13 @@ diagram. Deliberately narrow first version:
   abbreviation expansion — both real adapters already produce clean
   names, so anything fancier would be an unevidenced guess.
 - Degree-type mapping uses a small, closed, evidence-only table (see
-  ``_DEGREE_TYPE_TABLE``) built from real strings seen in the
-  CourseLeaf/UT Austin and PDF/AAMU fixtures — nothing stripped or
-  guessed for an unfamiliar phrase. A degree that doesn't match gets no
+  ``_DEGREE_TYPE_TABLE``) — every one of the 10 entries is backed by a
+  committed fixture under ``tests/fixtures/pdf/``/``tests/fixtures/courseleaf/``
+  (not just "seen during research and trusted from memory" — an earlier
+  revision claimed that for 8 of the 10 entries without a fixture to
+  check it against, caught in review; see the table's own comment for
+  the per-entry citations). Nothing stripped or guessed for an
+  unfamiliar phrase. A degree that doesn't match gets no
   ``Program`` row; it gets a ``data_review_task`` anchored to the real
   ``AcademicUnit`` instead (there's no ``Program`` row to anchor to yet
   — see ``ingest_program_degrees``'s docstring for why that, not a fake
@@ -47,45 +51,58 @@ from us_grad_recommender.models.review import CatalogEntityType, DataReviewTask,
 from us_grad_recommender.review_queue import create_review_task
 
 # (prefix, code, label, level) — every entry is a literal degree-name
-# string actually seen in tests/fixtures/courseleaf/ or tests/fixtures/pdf/
-# during Phase 2.2B, not a guessed/generalized pattern. Matched as a
-# *prefix* (not exact-string) so CourseLeaf's subject-suffixed form
-# ("Master of Science in Computer Science") and AAMU's plain form
-# ("Master of Science") both map to the same MS code — the subject is
-# already captured separately in Program.canonical_name.
+# string, each backed by a specific committed fixture (cited per entry
+# below), not a guessed/generalized pattern. Matched as a *prefix* (not
+# exact-string) so CourseLeaf's subject-suffixed form ("Master of
+# Science in Computer Science") and AAMU's plain form ("Master of
+# Science") both map to the same MS code — the subject is already
+# captured separately in Program.canonical_name.
 #
 # Order only matters if one real string were itself a prefix of another;
 # checked directly against this exact list and none of them are (e.g.
 # "Master of Science" is not a prefix of "Master of Social Work" — they
 # diverge at the 11th character).
 _DEGREE_TYPE_TABLE: list[tuple[str, str, str, DegreeLevel]] = [
+    # tests/fixtures/courseleaf/ut_austin_computer_science_program.html,
+    # tests/fixtures/pdf/aamu_biology_program.pdf
     ("Doctor of Philosophy", "PHD", "Doctor of Philosophy", DegreeLevel.DOCTORAL),
+    # tests/fixtures/courseleaf/ut_austin_computer_science_program.html,
+    # tests/fixtures/pdf/aamu_biology_program.pdf,
+    # tests/fixtures/pdf/aamu_computer_science_program.pdf
     ("Master of Science", "MS", "Master of Science", DegreeLevel.MASTERS),
+    # tests/fixtures/pdf/aamu_business_administration_program.pdf
     (
         "Master of Business Administration",
         "MBA",
         "Master of Business Administration",
         DegreeLevel.MASTERS,
     ),
+    # tests/fixtures/pdf/aamu_education_early_childhood_program.pdf
     ("Master of Education", "MED", "Master of Education", DegreeLevel.MASTERS),
+    # tests/fixtures/pdf/aamu_interdisciplinary_studies_program.pdf
     ("Master of Arts", "MA", "Master of Arts", DegreeLevel.MASTERS),
+    # tests/fixtures/pdf/aamu_public_administration_program.pdf
     (
         "Master of Public Administration",
         "MPA",
         "Master of Public Administration",
         DegreeLevel.MASTERS,
     ),
+    # tests/fixtures/pdf/aamu_social_work_program.pdf
     ("Master of Social Work", "MSW", "Master of Social Work", DegreeLevel.MASTERS),
+    # tests/fixtures/pdf/aamu_systems_materiel_engineering_program.pdf
     ("Master of Engineering", "MENG", "Master of Engineering", DegreeLevel.MASTERS),
+    # tests/fixtures/pdf/aamu_urban_regional_planning_program.pdf
     (
         "Master of Urban and Regional Planning",
         "MURP",
         "Master of Urban and Regional Planning",
         DegreeLevel.MASTERS,
     ),
-    # Ed.S. is a real post-master's, pre-doctoral credential — not a
-    # "certificate" in the usual (short, non-degree) sense, so OTHER is
-    # the honest fit among DegreeLevel's four values, not CERTIFICATE.
+    # tests/fixtures/pdf/aamu_education_specialist_program.pdf — Ed.S. is
+    # a real post-master's, pre-doctoral credential, not a "certificate"
+    # in the usual (short, non-degree) sense, so OTHER is the honest fit
+    # among DegreeLevel's four values, not CERTIFICATE.
     ("Education Specialist", "EDS", "Education Specialist", DegreeLevel.OTHER),
 ]
 
@@ -127,6 +144,16 @@ def _get_or_create_degree_type(
 
 
 def _canonicalize(name: str) -> str:
+    """Whitespace normalization only — no case folding. This is a known,
+    pre-agreed scope decision (confirmed with the user before this PR was
+    written), not an oversight: two crawls of the same program differing
+    only in case (e.g. "Computer Science" vs "computer science") produce
+    two distinct ``Program`` rows, since ``uq_program_identity``'s match
+    on ``canonical_name`` is case-sensitive. Both real adapters currently
+    produce consistent title-case names, so this hasn't been observed —
+    fixing it would mean guessing a case-normalization rule with no
+    evidence it's needed yet.
+    """
     return " ".join(name.split())
 
 

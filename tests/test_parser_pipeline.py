@@ -155,6 +155,58 @@ def test_ingest_real_pdf_program_creates_program_row(db_session, academic_unit):
     assert outcome.program.program_url == f"{AAMU_CATALOG_URL}#page=1"
 
 
+# Regression coverage for a real accuracy bug caught in review: an earlier
+# revision of _DEGREE_TYPE_TABLE's comments claimed all 10 entries were
+# "seen in tests/fixtures/", but only 2 (Doctor of Philosophy, Master of
+# Science) actually were — the other 8 were real (verified against the
+# actual downloaded AAMU PDF during Phase 2.2B pilot scoping) but never
+# committed as fixtures, so the claim wasn't checkable. Fixed by
+# extracting real single-page fixtures for all 8 and exercising each one
+# here end to end: real fixture bytes -> real PdfCatalogAdapter output ->
+# ingest_program_degrees() -> correct degree_type_code.
+_REMAINING_DEGREE_TYPE_FIXTURES = [
+    ("aamu_business_administration_program.pdf", "Business Administration", "MBA"),
+    ("aamu_education_early_childhood_program.pdf", "Education, Early Childhood", "MED"),
+    ("aamu_education_specialist_program.pdf", "Education, General", "EDS"),
+    ("aamu_interdisciplinary_studies_program.pdf", "Interdisciplinary Studies", "MA"),
+    ("aamu_public_administration_program.pdf", "Public Administration", "MPA"),
+    ("aamu_social_work_program.pdf", "Social Work", "MSW"),
+    ("aamu_systems_materiel_engineering_program.pdf", "Systems & Materiel Engineering", "MENG"),
+    ("aamu_urban_regional_planning_program.pdf", "Urban and Regional Planning", "MURP"),
+]
+
+
+@pytest.mark.parametrize(
+    "fixture_name,expected_program_name,expected_code", _REMAINING_DEGREE_TYPE_FIXTURES
+)
+def test_ingest_real_pdf_program_for_each_previously_unverified_degree_type(
+    db_session, academic_unit, fixture_name, expected_program_name, expected_code
+):
+    content = (PDF_FIXTURES / fixture_name).read_bytes()
+    programs = PdfCatalogAdapter().extract_programs(AAMU_CATALOG_URL, content)
+    degrees = PdfCatalogAdapter().extract_degrees(AAMU_CATALOG_URL, content)
+    assert len(programs) == 1
+    assert programs[0].name == expected_program_name
+    assert len(degrees) == 1
+
+    outcomes = ingest_program_degrees(
+        db_session,
+        academic_unit_id=academic_unit.id,
+        program=programs[0],
+        degrees=degrees,
+        last_verified_at=TODAY,
+    )
+
+    assert len(outcomes) == 1
+    outcome = outcomes[0]
+    assert outcome.program is not None, (
+        f"{fixture_name}: expected a real degree-type match, got a review task "
+        f"(field_name={outcome.review_task.field_name if outcome.review_task else None!r})"
+    )
+    assert outcome.program.degree_type_code == expected_code
+    assert outcome.program.status == EntityStatus.ACTIVE
+
+
 def test_ingest_reuses_existing_degree_type_row(db_session, academic_unit):
     program_a = RawProgramCandidate(name="Biology", program_url="https://x/", source_url="https://x/")
     program_b = RawProgramCandidate(name="Chemistry", program_url="https://x/", source_url="https://x/")
@@ -194,6 +246,44 @@ def test_ingest_canonicalizes_whitespace_only(db_session, academic_unit):
     )
     assert outcomes[0].program is not None
     assert outcomes[0].program.canonical_name == "Computer Science"
+
+
+def test_ingest_does_not_case_fold_pins_known_scope_decision(db_session, academic_unit):
+    # Documents the known, pre-agreed gap noted in _canonicalize()'s
+    # docstring: two crawls of the same program differing only in case
+    # produce two distinct Program rows, since uq_program_identity's
+    # canonical_name match is case-sensitive. This is intentional (no
+    # evidence a case-normalization rule is needed yet), not a bug — this
+    # test exists so a future change to _canonicalize() has to
+    # consciously break it rather than silently drift.
+    program_lower = RawProgramCandidate(
+        name="computer science", program_url="https://x/", source_url="https://x/"
+    )
+    program_title = RawProgramCandidate(
+        name="Computer Science", program_url="https://x/", source_url="https://x/"
+    )
+    degrees = [RawDegreeCandidate(raw_degree_name="Master of Science", source_url="https://x/")]
+
+    ingest_program_degrees(
+        db_session,
+        academic_unit_id=academic_unit.id,
+        program=program_lower,
+        degrees=degrees,
+        last_verified_at=TODAY,
+    )
+    outcomes = ingest_program_degrees(
+        db_session,
+        academic_unit_id=academic_unit.id,
+        program=program_title,
+        degrees=degrees,
+        last_verified_at=TODAY,
+    )
+
+    # Not flagged as a duplicate — a real (currently accepted) gap, not
+    # the desired long-term behavior.
+    assert outcomes[0].program is not None
+    assert outcomes[0].program.canonical_name == "Computer Science"
+    assert db_session.query(Program).count() == 2
 
 
 def test_ingest_unmapped_degree_type_creates_no_program_row(db_session, academic_unit):

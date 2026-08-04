@@ -938,7 +938,11 @@ Explicit, not yet scheduled to a specific phase sub-step beyond "Phase
   (Phase 2.2B): a proactive existence check, with the unique-constraint
   `IntegrityError` caught as a defensive fallback for a genuine race,
   both routed to a `POSSIBLE_DUPLICATE` review task pointing at the real
-  existing row.
+  existing row. (`_DEGREE_TYPE_TABLE`'s 10 entries went through a real
+  accuracy correction during review: an earlier revision claimed all 10
+  were "seen in tests/fixtures/" when only 2 actually were — fixed by
+  extracting real single-page fixtures from the actual downloaded AAMU
+  PDF for the other 8 rather than weakening the claim.)
 - [ ] Implement the snapshot refresh/versioning workflow described in
   §5.1/§6 (insert-new-snapshot-and-repoint, never delete/modify).
 - [ ] Design (not just concept-list) the program/track-level visa
