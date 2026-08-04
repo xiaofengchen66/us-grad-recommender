@@ -130,6 +130,16 @@ def _canonicalize(name: str) -> str:
     return " ".join(name.split())
 
 
+# Program.raw_degree_name/canonical_name column limits (models/catalog.py).
+# An input exceeding these isn't just "too long to store" — it's a real
+# signal of likely garbled/concatenated extraction (this project's PDF
+# adapter fixtures document that failure mode directly), so it's routed
+# to review rather than silently truncated and written as plausible-
+# looking-but-wrong data.
+_MAX_RAW_DEGREE_NAME_LENGTH = 255
+_MAX_CANONICAL_NAME_LENGTH = 500
+
+
 def _find_existing_program(
     session: Session, *, academic_unit_id: int, degree_type_code: str, canonical_name: str
 ) -> Program | None:
@@ -167,6 +177,7 @@ def ingest_program_degrees(
     degrees: list[RawDegreeCandidate],
     last_verified_at: date,
     source_snapshot_id: int | None = None,
+    verification_status: VerificationStatus = VerificationStatus.PARSED,
 ) -> list[ProgramIngestOutcome]:
     """One ``Program`` row per matched degree — a department page
     declaring both an MS and a PhD for the same subject genuinely needs
@@ -182,6 +193,15 @@ def ingest_program_degrees(
     documents a *different* real finding, a PhD line with no program-name
     line before it, so the candidate is skipped entirely rather than
     paired with anything.)
+
+    ``verification_status`` defaults to PARSED because every real caller
+    today (``CourseLeafAdapter``, ``PdfCatalogAdapter``) is a
+    deterministic adapter. Per §9/§10, LLM-fallback output must always
+    land at NEEDS_REVIEW, never PARSED — this parameter exists so a
+    future caller wiring an LLM-fallback adapter through this same
+    function has to consciously override the default rather than
+    silently inheriting deterministic-confidence status for
+    non-deterministic output.
 
     ``source_snapshot_id`` is accepted and threaded onto
     ``Program.last_seen_snapshot_id`` even though no caller can supply a
@@ -208,6 +228,13 @@ def ingest_program_degrees(
     proactive lookup (with the unique-constraint ``IntegrityError``
     caught as a defensive fallback for a genuine race, not the primary
     mechanism).
+
+    Both non-duplicate review cases (unmapped degree type, name too long
+    to store) use ``ReviewReason.LOW_CONFIDENCE`` — none of the six
+    reasons in §5 is a perfect fit for "no mapping exists"/"looks
+    garbled," and LOW_CONFIDENCE is the closest: both signal "don't trust
+    this extraction as-is," which is the property a reviewer scanning by
+    reason actually cares about.
     """
     canonical_name = _canonicalize(program.name)
     outcomes = []
@@ -236,6 +263,21 @@ def ingest_program_degrees(
         code, label, level = match
         degree_type = _get_or_create_degree_type(session, code, label, level)
 
+        if (
+            len(degree.raw_degree_name) > _MAX_RAW_DEGREE_NAME_LENGTH
+            or len(canonical_name) > _MAX_CANONICAL_NAME_LENGTH
+        ):
+            field_name = f"name_too_long:{degree.raw_degree_name} program={program.name}"[:100]
+            task = create_review_task(
+                session,
+                entity_type=CatalogEntityType.ACADEMIC_UNIT,
+                entity_id=academic_unit_id,
+                reason=ReviewReason.LOW_CONFIDENCE,
+                field_name=field_name,
+            )
+            outcomes.append(ProgramIngestOutcome(degree=degree, program=None, review_task=task))
+            continue
+
         existing = _find_existing_program(
             session,
             academic_unit_id=academic_unit_id,
@@ -258,7 +300,7 @@ def ingest_program_degrees(
             raw_degree_name=degree.raw_degree_name,
             canonical_name=canonical_name,
             program_url=program.program_url,
-            verification_status=VerificationStatus.PARSED,
+            verification_status=verification_status,
             last_verified_at=last_verified_at,
             last_seen_snapshot_id=source_snapshot_id,
         )

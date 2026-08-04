@@ -22,6 +22,7 @@ from us_grad_recommender.models.catalog import (
     SourceType,
     UnitType,
 )
+from us_grad_recommender.models.common import VerificationStatus
 from us_grad_recommender.models.review import CatalogEntityType, ReviewReason
 from us_grad_recommender.models.university import Sector, University
 from us_grad_recommender.parser_pipeline import ingest_program_degrees
@@ -463,3 +464,98 @@ def test_get_or_create_degree_type_survives_concurrent_first_creation_race(
     assert outcomes[0].program is not None
     assert outcomes[0].program.degree_type_code == "MS"
     assert db_session.query(DegreeType).filter_by(code="MS").count() == 1
+
+
+def test_ingest_routes_overlong_raw_degree_name_to_review_instead_of_truncating(
+    db_session, academic_unit
+):
+    # 255 is Program.raw_degree_name's column limit. An input this long
+    # is itself a signal of likely garbled extraction (documented failure
+    # mode for the PDF adapter), so it's routed to review rather than
+    # silently truncated and written as plausible-looking-but-wrong data.
+    program = RawProgramCandidate(
+        name="Biology", program_url="https://x/", source_url="https://x/"
+    )
+    overlong_name = "Master of Science " + ("x" * 250)
+    assert len(overlong_name) > 255
+    degrees = [RawDegreeCandidate(raw_degree_name=overlong_name, source_url="https://x/")]
+
+    outcomes = ingest_program_degrees(
+        db_session,
+        academic_unit_id=academic_unit.id,
+        program=program,
+        degrees=degrees,
+        last_verified_at=TODAY,
+    )
+
+    assert len(outcomes) == 1
+    outcome = outcomes[0]
+    assert outcome.program is None
+    assert outcome.review_task is not None
+    assert outcome.review_task.reason == ReviewReason.LOW_CONFIDENCE
+    assert outcome.review_task.entity_type == CatalogEntityType.ACADEMIC_UNIT
+    assert outcome.review_task.entity_id == academic_unit.id
+    assert db_session.query(Program).count() == 0
+
+
+def test_ingest_routes_overlong_canonical_name_to_review_instead_of_truncating(
+    db_session, academic_unit
+):
+    # 500 is Program.canonical_name's column limit.
+    overlong_program_name = "x" * 501
+    program = RawProgramCandidate(
+        name=overlong_program_name, program_url="https://x/", source_url="https://x/"
+    )
+    degrees = [RawDegreeCandidate(raw_degree_name="Master of Science", source_url="https://x/")]
+
+    outcomes = ingest_program_degrees(
+        db_session,
+        academic_unit_id=academic_unit.id,
+        program=program,
+        degrees=degrees,
+        last_verified_at=TODAY,
+    )
+
+    assert len(outcomes) == 1
+    assert outcomes[0].program is None
+    assert outcomes[0].review_task is not None
+    assert outcomes[0].review_task.reason == ReviewReason.LOW_CONFIDENCE
+    assert db_session.query(Program).count() == 0
+
+
+def test_ingest_verification_status_defaults_to_parsed(db_session, academic_unit):
+    program = RawProgramCandidate(
+        name="Biology", program_url="https://x/", source_url="https://x/"
+    )
+    degrees = [RawDegreeCandidate(raw_degree_name="Master of Science", source_url="https://x/")]
+
+    outcomes = ingest_program_degrees(
+        db_session,
+        academic_unit_id=academic_unit.id,
+        program=program,
+        degrees=degrees,
+        last_verified_at=TODAY,
+    )
+    assert outcomes[0].program is not None
+    assert outcomes[0].program.verification_status == VerificationStatus.PARSED
+
+
+def test_ingest_verification_status_can_be_overridden(db_session, academic_unit):
+    # Pins the guard MEDIUM finding asked for: a future LLM-fallback
+    # caller must be able to override the deterministic-adapter default
+    # rather than silently inheriting PARSED for non-deterministic output.
+    program = RawProgramCandidate(
+        name="Biology", program_url="https://x/", source_url="https://x/"
+    )
+    degrees = [RawDegreeCandidate(raw_degree_name="Master of Science", source_url="https://x/")]
+
+    outcomes = ingest_program_degrees(
+        db_session,
+        academic_unit_id=academic_unit.id,
+        program=program,
+        degrees=degrees,
+        last_verified_at=TODAY,
+        verification_status=VerificationStatus.NEEDS_REVIEW,
+    )
+    assert outcomes[0].program is not None
+    assert outcomes[0].program.verification_status == VerificationStatus.NEEDS_REVIEW
