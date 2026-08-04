@@ -23,7 +23,7 @@ from us_grad_recommender.models.catalog import (
     UnitType,
 )
 from us_grad_recommender.models.common import EntityStatus, VerificationStatus
-from us_grad_recommender.models.review import CatalogEntityType, ReviewReason
+from us_grad_recommender.models.review import CatalogEntityType, DataReviewTask, ReviewReason
 from us_grad_recommender.models.university import Sector, University
 from us_grad_recommender.parser_pipeline import ingest_program_degrees
 
@@ -822,20 +822,19 @@ def test_ingest_accepts_canonical_name_at_exact_length_limit(db_session, academi
 
 
 def test_ingest_raises_clear_error_for_nonexistent_academic_unit_id(db_session):
-    # academic_unit_id is a real FK on Program (unlike DataReviewTask's
-    # entity_id, which is intentionally not one — see
-    # test_review_queue.py::test_create_review_task_does_not_validate_entity_id_exists).
-    # A nonexistent id triggers a real FK-violation IntegrityError, which
-    # this function's duplicate-handling fallback can't resolve into an
-    # existing row (there isn't one) — verifying it fails loudly with a
-    # clear RuntimeError rather than silently mismapping the error as a
-    # duplicate.
+    # academic_unit_id is validated up front (raises ValueError before
+    # any DB write is attempted) specifically so every review-task path
+    # anchored to it — not just the Program insert, which has a real FK
+    # the database would catch anyway — can't silently reference a
+    # nonexistent unit. Unlike DataReviewTask's entity_id, which is
+    # intentionally not a real FK — see
+    # test_review_queue.py::test_create_review_task_does_not_validate_entity_id_exists.
     program = RawProgramCandidate(
         name="Biology", program_url="https://x/", source_url="https://x/"
     )
     degrees = [RawDegreeCandidate(raw_degree_name="Master of Science", source_url="https://x/")]
 
-    with pytest.raises(RuntimeError, match="no colliding row found"):
+    with pytest.raises(ValueError, match="No AcademicUnit with id=999999999"):
         ingest_program_degrees(
             db_session,
             academic_unit_id=999999999,
@@ -843,3 +842,69 @@ def test_ingest_raises_clear_error_for_nonexistent_academic_unit_id(db_session):
             degrees=degrees,
             last_verified_at=TODAY,
         )
+
+
+def test_ingest_raises_for_nonexistent_academic_unit_id_even_on_unmapped_degree_path(
+    db_session,
+):
+    # Regression test for the actual MEDIUM finding: before the upfront
+    # validation above existed, this exact scenario (an unmapped degree
+    # type, which never touches Program's real FK at all) would have
+    # "succeeded" and created an orphaned DataReviewTask pointing at a
+    # nonexistent AcademicUnit — DataReviewTask.entity_id has no FK to
+    # catch that. Confirms the fix closes the gap for this path too, not
+    # just the already-FK-protected Program insert path.
+    program = RawProgramCandidate(name="Law", program_url="https://x/", source_url="https://x/")
+    degrees = [RawDegreeCandidate(raw_degree_name="Juris Doctor", source_url="https://x/")]
+
+    with pytest.raises(ValueError, match="No AcademicUnit with id=999999999"):
+        ingest_program_degrees(
+            db_session,
+            academic_unit_id=999999999,
+            program=program,
+            degrees=degrees,
+            last_verified_at=TODAY,
+        )
+    assert db_session.query(DataReviewTask).count() == 0
+
+
+def test_get_or_create_degree_type_raises_when_race_fallback_also_finds_nothing(
+    db_session, monkeypatch
+):
+    # Exercises _get_or_create_degree_type's own "should be unreachable"
+    # guard, the DegreeType-table analog of
+    # test_ingest_raises_clear_error_for_nonexistent_academic_unit_id's
+    # coverage of the Program-insert path. Forced by making
+    # _get_degree_type unconditionally return None (not just once) while
+    # a real colliding row exists, so the IntegrityError fires and the
+    # fallback re-fetch still comes up empty.
+    db_session.add(DegreeType(code="MS", label="Master of Science", level=DegreeLevel.MASTERS))
+    db_session.commit()
+    monkeypatch.setattr(parser_pipeline_module, "_get_degree_type", lambda session, code: None)
+
+    with pytest.raises(RuntimeError, match="no row found for code='MS'"):
+        parser_pipeline_module._get_or_create_degree_type(
+            db_session, "MS", "Master of Science", DegreeLevel.MASTERS
+        )
+
+
+def test_ingest_allows_program_url_none_despite_type_hint(db_session, academic_unit):
+    # RawProgramCandidate.program_url is typed as non-Optional str
+    # (catalog_adapters/base.py), and every real adapter always supplies
+    # a real URL — but Python doesn't enforce type hints at runtime, and
+    # Program.program_url is a genuinely nullable column
+    # (models/catalog.py). This confirms the pipeline degrades gracefully
+    # (passes None straight through) rather than assuming the type
+    # contract always holds for every future caller.
+    program = RawProgramCandidate(name="Biology", program_url=None, source_url="https://x/")  # type: ignore[arg-type]
+    degrees = [RawDegreeCandidate(raw_degree_name="Master of Science", source_url="https://x/")]
+
+    outcomes = ingest_program_degrees(
+        db_session,
+        academic_unit_id=academic_unit.id,
+        program=program,
+        degrees=degrees,
+        last_verified_at=TODAY,
+    )
+    assert outcomes[0].program is not None
+    assert outcomes[0].program.program_url is None

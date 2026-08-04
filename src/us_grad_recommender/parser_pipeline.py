@@ -45,7 +45,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from us_grad_recommender.catalog_adapters import RawDegreeCandidate, RawProgramCandidate
-from us_grad_recommender.models.catalog import DegreeLevel, DegreeType, Program
+from us_grad_recommender.models.catalog import AcademicUnit, DegreeLevel, DegreeType, Program
 from us_grad_recommender.models.common import EntityStatus, VerificationStatus
 from us_grad_recommender.models.review import CatalogEntityType, DataReviewTask, ReviewReason
 from us_grad_recommender.review_queue import create_review_task
@@ -277,15 +277,17 @@ def ingest_program_degrees(
     added first — not safe to reuse as-is for §6's workflow.
 
     Every review task this creates points at a real, already-existing
-    row — never a fabricated id. An unmapped degree type has no
-    ``Program`` row to anchor to (none was written), so it's anchored to
-    the caller-supplied ``academic_unit_id`` instead, which does exist;
-    ``field_name`` carries the raw degree text and program name a
-    reviewer needs to act on it. A duplicate collision is anchored to the
-    real, already-existing colliding ``Program`` row, found by a
-    proactive lookup (with the unique-constraint ``IntegrityError``
-    caught as a defensive fallback for a genuine race, not the primary
-    mechanism).
+    row — never a fabricated id. ``academic_unit_id`` is validated up
+    front (raises ``ValueError`` if it doesn't resolve to a real
+    ``AcademicUnit``) specifically so every review task anchored to it —
+    the empty-name, unmapped-degree-type, and name-too-long paths, none
+    of which go through a real FK the database would check — can't
+    silently reference a nonexistent unit the way the ``Program`` insert
+    path (which does have a real FK) already fails loudly for. A
+    duplicate collision is anchored to the real, already-existing
+    colliding ``Program`` row, found by a proactive lookup (with the
+    unique-constraint ``IntegrityError`` caught as a defensive fallback
+    for a genuine race, not the primary mechanism).
 
     Both non-duplicate review cases (unmapped degree type, name too long
     to store) use ``ReviewReason.LOW_CONFIDENCE`` — none of the six
@@ -294,6 +296,9 @@ def ingest_program_degrees(
     this extraction as-is," which is the property a reviewer scanning by
     reason actually cares about.
     """
+    if session.get(AcademicUnit, academic_unit_id) is None:
+        raise ValueError(f"No AcademicUnit with id={academic_unit_id}")
+
     canonical_name = _canonicalize(program.name)
     outcomes = []
     for degree in degrees:
