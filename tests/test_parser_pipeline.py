@@ -1,17 +1,26 @@
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime, timezone
 from pathlib import Path
 
 import pytest
 
+import us_grad_recommender.parser_pipeline as parser_pipeline_module
 from us_grad_recommender.catalog_adapters import (
     CourseLeafAdapter,
     PdfCatalogAdapter,
     RawDegreeCandidate,
     RawProgramCandidate,
 )
-from us_grad_recommender.models.catalog import AcademicUnit, DegreeType, Program, UnitType
+from us_grad_recommender.models.catalog import (
+    AcademicUnit,
+    DegreeType,
+    EvidenceSource,
+    Program,
+    SourceSnapshot,
+    SourceType,
+    UnitType,
+)
 from us_grad_recommender.models.review import CatalogEntityType, ReviewReason
 from us_grad_recommender.models.university import Sector, University
 from us_grad_recommender.parser_pipeline import ingest_program_degrees
@@ -52,6 +61,28 @@ def academic_unit(db_session) -> AcademicUnit:
     db_session.add(unit)
     db_session.commit()
     return unit
+
+
+@pytest.fixture()
+def snapshot(db_session, academic_unit) -> SourceSnapshot:
+    source = EvidenceSource(
+        unitid=academic_unit.unitid,
+        source_type=SourceType.ACADEMIC_CATALOG,
+        base_url="https://catalog.example.edu",
+    )
+    db_session.add(source)
+    db_session.flush()
+
+    snap = SourceSnapshot(
+        evidence_source_id=source.id,
+        url="https://catalog.example.edu/cs-ms",
+        retrieved_at=datetime(2026, 8, 3, tzinfo=timezone.utc),
+        content_hash="abc123",
+        raw_content="<html>...</html>",
+    )
+    db_session.add(snap)
+    db_session.commit()
+    return snap
 
 
 def test_ingest_real_courseleaf_program_creates_one_row_per_degree(db_session, academic_unit):
@@ -186,7 +217,7 @@ def test_ingest_unmapped_degree_type_creates_no_program_row(db_session, academic
     assert outcome.review_task.reason == ReviewReason.LOW_CONFIDENCE
     assert outcome.review_task.entity_type == CatalogEntityType.ACADEMIC_UNIT
     assert outcome.review_task.entity_id == academic_unit.id
-    assert outcome.review_task.field_name == "unmapped_degree_type:Juris Doctor"
+    assert outcome.review_task.field_name == "unmapped_degree_type:Juris Doctor program=Law"
 
     assert db_session.query(Program).count() == 0
 
@@ -250,3 +281,90 @@ def test_ingest_two_degrees_for_same_program_do_not_collide_with_each_other(
     )
     assert all(o.program is not None for o in outcomes)
     assert db_session.query(Program).count() == 2
+
+
+def test_ingest_sets_last_seen_snapshot_id_when_supplied(db_session, academic_unit, snapshot):
+    program = RawProgramCandidate(name="Biology", program_url=None, source_url="https://x/")
+    degrees = [RawDegreeCandidate(raw_degree_name="Master of Science", source_url="https://x/")]
+
+    outcomes = ingest_program_degrees(
+        db_session,
+        academic_unit_id=academic_unit.id,
+        program=program,
+        degrees=degrees,
+        last_verified_at=TODAY,
+        source_snapshot_id=snapshot.id,
+    )
+    assert outcomes[0].program is not None
+    assert outcomes[0].program.last_seen_snapshot_id == snapshot.id
+
+
+def test_ingest_leaves_last_seen_snapshot_id_none_when_omitted(db_session, academic_unit):
+    # No live fetch layer exists yet, so this is the realistic call shape
+    # today — asserted explicitly so the gap is visible, not implicit.
+    program = RawProgramCandidate(name="Biology", program_url=None, source_url="https://x/")
+    degrees = [RawDegreeCandidate(raw_degree_name="Master of Science", source_url="https://x/")]
+
+    outcomes = ingest_program_degrees(
+        db_session,
+        academic_unit_id=academic_unit.id,
+        program=program,
+        degrees=degrees,
+        last_verified_at=TODAY,
+    )
+    assert outcomes[0].program is not None
+    assert outcomes[0].program.last_seen_snapshot_id is None
+
+
+def test_ingest_falls_back_to_integrity_error_on_genuine_race(
+    db_session, academic_unit, monkeypatch
+):
+    # Simulates the race the proactive _find_existing_program() check
+    # can't catch: another caller inserts the colliding row *between* our
+    # check and our insert. Real concurrent sessions aren't exercised
+    # here (this module has no concurrent caller yet, unlike
+    # review_queue.py's resolve_*() functions, which do lock rows for
+    # exactly that reason) — instead, the proactive check is monkeypatched
+    # to report "nothing found" exactly once, while a real colliding
+    # Program row already exists in the same transaction, so the
+    # IntegrityError path is what actually runs.
+    program = RawProgramCandidate(name="Biology", program_url=None, source_url="https://x/")
+    degrees = [RawDegreeCandidate(raw_degree_name="Master of Science", source_url="https://x/")]
+
+    first_outcomes = ingest_program_degrees(
+        db_session,
+        academic_unit_id=academic_unit.id,
+        program=program,
+        degrees=degrees,
+        last_verified_at=TODAY,
+    )
+    existing_program = first_outcomes[0].program
+    assert existing_program is not None
+
+    real_find_existing_program = parser_pipeline_module._find_existing_program
+    call_count = {"n": 0}
+
+    def _lie_once(*args, **kwargs):
+        call_count["n"] += 1
+        if call_count["n"] == 1:
+            return None
+        return real_find_existing_program(*args, **kwargs)
+
+    monkeypatch.setattr(parser_pipeline_module, "_find_existing_program", _lie_once)
+
+    outcomes = ingest_program_degrees(
+        db_session,
+        academic_unit_id=academic_unit.id,
+        program=program,
+        degrees=degrees,
+        last_verified_at=TODAY,
+    )
+
+    assert len(outcomes) == 1
+    outcome = outcomes[0]
+    assert outcome.program is None
+    assert outcome.review_task is not None
+    assert outcome.review_task.reason == ReviewReason.POSSIBLE_DUPLICATE
+    assert outcome.review_task.entity_id == existing_program.id
+    # The race must not have created a second Program row.
+    assert db_session.query(Program).count() == 1

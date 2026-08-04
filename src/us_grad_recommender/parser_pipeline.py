@@ -141,6 +141,7 @@ def ingest_program_degrees(
     program: RawProgramCandidate,
     degrees: list[RawDegreeCandidate],
     last_verified_at: date,
+    source_snapshot_id: int | None = None,
 ) -> list[ProgramIngestOutcome]:
     """One ``Program`` row per matched degree — a department page
     declaring both an MS and a PhD for the same subject (a real,
@@ -148,15 +149,31 @@ def ingest_program_degrees(
     genuinely needs two rows, since ``uq_program_identity`` includes
     ``degree_type_code``.
 
+    ``source_snapshot_id`` is accepted and threaded onto
+    ``Program.last_seen_snapshot_id`` even though no caller can supply a
+    real one yet (no live fetch layer exists) — the parameter exists so
+    that gap is visible in this function's shape rather than silently
+    baked in by omission. Pass ``None`` until a real snapshot pipeline
+    exists.
+
+    This function is insert-only: calling it again for a program already
+    in the table (e.g. a routine re-crawl per §6, not just "an adapter
+    re-running without proper idempotency") creates a fresh
+    ``POSSIBLE_DUPLICATE`` review task every time rather than refreshing
+    ``last_seen_snapshot_id``/``last_verified_at`` on the existing row.
+    Wiring this into a recurring re-crawl job needs that refresh path
+    added first — not safe to reuse as-is for §6's workflow.
+
     Every review task this creates points at a real, already-existing
     row — never a fabricated id. An unmapped degree type has no
     ``Program`` row to anchor to (none was written), so it's anchored to
     the caller-supplied ``academic_unit_id`` instead, which does exist;
-    ``field_name`` carries the raw degree text a reviewer needs to act on
-    it. A duplicate collision is anchored to the real, already-existing
-    colliding ``Program`` row, found by a proactive lookup (with the
-    unique-constraint ``IntegrityError`` caught as a defensive fallback
-    for a genuine race, not the primary mechanism).
+    ``field_name`` carries the raw degree text and program name a
+    reviewer needs to act on it. A duplicate collision is anchored to the
+    real, already-existing colliding ``Program`` row, found by a
+    proactive lookup (with the unique-constraint ``IntegrityError``
+    caught as a defensive fallback for a genuine race, not the primary
+    mechanism).
     """
     canonical_name = _canonicalize(program.name)
     outcomes = []
@@ -164,9 +181,14 @@ def ingest_program_degrees(
         match = _match_degree_type(degree.raw_degree_name)
         if match is None:
             # field_name is String(100) — truncate defensively so an
-            # unusually long raw degree string can't turn into an insert
-            # error on the review task itself.
-            field_name = f"unmapped_degree_type:{degree.raw_degree_name}"[:100]
+            # unusually long raw degree/program string can't turn into
+            # an insert error on the review task itself. Degree text
+            # goes first since it's the more important piece for a
+            # reviewer deciding whether the mapping table needs a new
+            # entry; the program name is context for *which* page.
+            field_name = f"unmapped_degree_type:{degree.raw_degree_name} program={program.name}"[
+                :100
+            ]
             task = create_review_task(
                 session,
                 entity_type=CatalogEntityType.ACADEMIC_UNIT,
@@ -204,6 +226,7 @@ def ingest_program_degrees(
             program_url=program.program_url,
             verification_status=VerificationStatus.PARSED,
             last_verified_at=last_verified_at,
+            last_seen_snapshot_id=source_snapshot_id,
         )
         try:
             with session.begin_nested():
@@ -220,7 +243,16 @@ def ingest_program_degrees(
                 degree_type_code=degree_type.code,
                 canonical_name=canonical_name,
             )
-            assert existing is not None  # the IntegrityError guarantees a real collision exists
+            if existing is None:
+                # The IntegrityError guarantees a real collision exists;
+                # if we can't find it, something more fundamental than
+                # this duplicate-handling path is wrong. A plain
+                # assert would be stripped under -O — raise explicitly.
+                raise RuntimeError(
+                    "IntegrityError on Program insert but no colliding row found for "
+                    f"academic_unit_id={academic_unit_id}, degree_type_code={degree_type.code}, "
+                    f"canonical_name={canonical_name!r}"
+                ) from None
             task = create_review_task(
                 session,
                 entity_type=CatalogEntityType.PROGRAM,
