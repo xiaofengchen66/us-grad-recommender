@@ -65,6 +65,12 @@ export default function Home() {
           </code>{" "}
           for the roadmap.
         </p>
+        <Link
+          href="/recommend"
+          className="mt-4 inline-block rounded-md bg-neutral-900 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-neutral-700"
+        >
+          试用选校助手（Beta，含示例数据）→
+        </Link>
 
         <form onSubmit={runSearch} className="mt-8 space-y-3">
           <input
