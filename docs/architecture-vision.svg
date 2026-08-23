@@ -1,0 +1,98 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1300 740" font-family="Helvetica, Arial, sans-serif">
+  <style>
+    .box { rx: 8; stroke-width: 1.5; }
+    .built { fill: #d5e8d4; stroke: #82b366; }
+    .source { fill: #dae8fc; stroke: #6c8ebf; }
+    .progress { fill: #fff2cc; stroke: #d6b656; }
+    .planned { fill: #f8cecc; stroke: #b85450; }
+    .label { font-size: 13px; }
+    .tier-built { fill: #2e7d32; font-weight: bold; font-size: 13px; }
+    .tier-progress { fill: #b8860b; font-weight: bold; font-size: 13px; }
+    .tier-planned { fill: #8b0000; font-weight: bold; font-size: 13px; }
+    .tier-source { fill: #666666; font-weight: bold; font-size: 13px; }
+    text { fill: #1a1a1a; }
+    .arrow { stroke: #666666; stroke-width: 1.5; fill: none; marker-end: url(#arrowhead); }
+    .arrow-dashed { stroke: #999999; stroke-width: 1.5; fill: none; stroke-dasharray: 5,4; marker-end: url(#arrowhead); }
+  </style>
+  <defs>
+    <marker id="arrowhead" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+      <path d="M0,0 L8,4 L0,8 Z" fill="#666666" />
+    </marker>
+  </defs>
+
+  <text x="20" y="45" class="tier-source">Data sources</text>
+  <text x="20" y="165" class="tier-built">Ingestion pipeline — built</text>
+  <text x="20" y="345" class="tier-progress">Program-level facts — schema in progress</text>
+  <text x="20" y="495" class="tier-planned">Recommendation product — planned</text>
+
+  <!-- Tier 1: sources -->
+  <rect class="box source" x="20" y="60" width="220" height="70" />
+  <text x="30" y="90" class="label">IPEDS survey data</text>
+  <text x="30" y="108" class="label" font-size="11" fill="#555">(HD + EF, real, downloaded)</text>
+
+  <rect class="box source" x="280" y="60" width="240" height="70" />
+  <text x="290" y="90" class="label">Institution catalog pages</text>
+  <text x="290" y="108" class="label" font-size="11" fill="#555">(CourseLeaf sites, PDF catalogs)</text>
+
+  <!-- Tier 2: built pipeline -->
+  <rect class="box built" x="20" y="180" width="220" height="80" />
+  <text x="30" y="205" class="label">Institution Index ✅</text>
+  <text x="30" y="223" class="label" font-size="11" fill="#333">2,113 real institutions</text>
+  <text x="30" y="238" class="label" font-size="11" fill="#333">(Carnegie class, sector, enrollment)</text>
+
+  <rect class="box built" x="280" y="180" width="220" height="80" />
+  <text x="290" y="205" class="label">Catalog Adapters ✅</text>
+  <text x="290" y="225" class="label" font-size="11" fill="#333">CourseLeafAdapter,</text>
+  <text x="290" y="240" class="label" font-size="11" fill="#333">PdfCatalogAdapter</text>
+
+  <rect class="box built" x="540" y="180" width="220" height="80" />
+  <text x="550" y="205" class="label">Parser Pipeline ✅</text>
+  <text x="550" y="225" class="label" font-size="11" fill="#333">RawProgramCandidate</text>
+  <text x="550" y="240" class="label" font-size="11" fill="#333">→ Program rows</text>
+
+  <rect class="box built" x="800" y="180" width="220" height="80" />
+  <text x="810" y="205" class="label">Review Queue ✅</text>
+  <text x="810" y="223" class="label" font-size="11" fill="#333">human verification before</text>
+  <text x="810" y="238" class="label" font-size="11" fill="#333">trusted (no auto-promotion)</text>
+
+  <!-- Tier 3: in-progress -->
+  <rect class="box progress" x="280" y="360" width="480" height="90" />
+  <text x="290" y="385" class="label">Program-level facts 🚧</text>
+  <text x="290" y="403" class="label" font-size="11" fill="#333">GPA · GRE · TOEFL/IELTS · Tuition/Cost ·</text>
+  <text x="290" y="418" class="label" font-size="11" fill="#333">Funding/Assistantship · Visa/I-20 Eligibility</text>
+  <text x="290" y="435" class="label" font-size="10" fill="#666">every fact keeps source, retrieved-at, verification status</text>
+
+  <!-- Tier 4: product -->
+  <rect class="box planned" x="20" y="510" width="220" height="80" />
+  <text x="30" y="535" class="label">Applicant Profile</text>
+  <text x="30" y="553" class="label" font-size="11" fill="#333">background · scores · budget ·</text>
+  <text x="30" y="568" class="label" font-size="11" fill="#333">field of study · funding need</text>
+
+  <rect class="box planned" x="320" y="510" width="240" height="80" />
+  <text x="330" y="535" class="label">Recommendation Engine 🚧</text>
+  <text x="330" y="553" class="label" font-size="11" fill="#333">(not yet built)</text>
+  <text x="330" y="568" class="label" font-size="11" fill="#333">Prestige / Funding / Balanced modes</text>
+
+  <rect class="box planned" x="640" y="510" width="280" height="90" />
+  <text x="650" y="533" class="label">Portfolio of 10 programs</text>
+  <text x="650" y="551" class="label" font-size="11" fill="#333">3 Reach · 4 Target · 3 Safety</text>
+  <text x="650" y="566" class="label" font-size="11" fill="#333">(never fewer than 2 safety)</text>
+  <text x="650" y="581" class="label" font-size="10" fill="#666">with evidence + main risk, not 300 results</text>
+
+  <!-- Mission callout -->
+  <rect x="20" y="630" width="900" height="80" rx="8" fill="#ffffff" stroke="#999999" stroke-dasharray="4,3" />
+  <text x="30" y="653" font-size="12" font-style="italic">Mission: help applicants discover U.S. master's opportunities — including overlooked</text>
+  <text x="30" y="670" font-size="12" font-style="italic">regional/research universities with real funding — that fit their academic profile, budget,</text>
+  <text x="30" y="687" font-size="12" font-style="italic">and goals, using recent evidence instead of incomplete lists or subjective agency advice.</text>
+
+  <!-- Edges -->
+  <path class="arrow" d="M130,130 L130,180" />
+  <path class="arrow" d="M400,130 L400,180" />
+  <path class="arrow" d="M500,220 L540,220" />
+  <path class="arrow" d="M760,220 L800,220" />
+  <path class="arrow" d="M910,260 L910,300 L520,300 L520,360" />
+  <path class="arrow-dashed" d="M130,260 L130,470 L370,470 L370,510" />
+  <path class="arrow-dashed" d="M480,450 L480,470 L440,470 L440,510" />
+  <path class="arrow" d="M240,550 L320,550" />
+  <path class="arrow" d="M560,550 L640,550" />
+</svg>

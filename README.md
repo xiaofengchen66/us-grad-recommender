@@ -7,6 +7,39 @@ read it before working on this repo. Agent-facing instructions are in
 [docs/REVIEW_AGENT_PROMPT.md](docs/REVIEW_AGENT_PROMPT.md); the working
 process (branching, review) is in [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## Vision
+
+This is not a scholarship search engine or a 300-result directory. The goal
+(full text in [docs/FULL_HANDOFF.md](docs/FULL_HANDOFF.md) §1–2):
+
+> Build a comprehensive U.S. master's-program database, then use official
+> program data, recent admission/funding outcomes, and user preferences to
+> recommend a deliberate portfolio of 10 programs.
+
+- **Portfolio, not a list** — 3 reach / 4 target / 3 safety by default,
+  never fewer than 2 safety, each pick backed by evidence and a stated
+  risk.
+- **Three modes** — Prestige (ranking/brand first), Funding
+  (assistantship/tuition-waiver/stipend first), Balanced (ranking,
+  admission realism, funding, cost, and fit together).
+- **Surface what agencies and rankings skip** — regional public
+  universities, smaller research universities, and departments with real
+  GA/TA/RA funding (e.g. Louisiana State University, University of Alaska
+  Fairbanks, University of Mississippi are illustrative, not a fixed list;
+  funding must always be verified at the specific program/track level).
+- **Evidence over fabrication** — every admission/funding fact shown to a
+  user carries a source, a retrieval date, and a verification status; a
+  field with no verified source shows as "not yet verified," never a
+  guess.
+
+Where the pieces stand today, and what's still missing between the
+built ingestion pipeline and an actual recommendation product:
+
+![Architecture and vision](docs/architecture-vision.svg)
+
+(Editable source: [docs/architecture-vision.drawio](docs/architecture-vision.drawio),
+open at [diagrams.net](https://app.diagrams.net).)
+
 ## Status
 
 Implemented so far:
