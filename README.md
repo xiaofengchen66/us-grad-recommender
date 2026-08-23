@@ -7,6 +7,39 @@ read it before working on this repo. Agent-facing instructions are in
 [docs/REVIEW_AGENT_PROMPT.md](docs/REVIEW_AGENT_PROMPT.md); the working
 process (branching, review) is in [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## Vision
+
+This is not a scholarship search engine or a 300-result directory. The goal
+(full text in [docs/FULL_HANDOFF.md](docs/FULL_HANDOFF.md) §1–2):
+
+> Build a comprehensive U.S. master's-program database, then use official
+> program data, recent admission/funding outcomes, and user preferences to
+> recommend a deliberate portfolio of 10 programs.
+
+- **Portfolio, not a list** — 3 reach / 4 target / 3 safety by default,
+  never fewer than 2 safety, each pick backed by evidence and a stated
+  risk.
+- **Three modes** — Prestige (ranking/brand first), Funding
+  (assistantship/tuition-waiver/stipend first), Balanced (ranking,
+  admission realism, funding, cost, and fit together).
+- **Surface what agencies and rankings skip** — regional public
+  universities, smaller research universities, and departments with real
+  GA/TA/RA funding (e.g. Louisiana State University, University of Alaska
+  Fairbanks, University of Mississippi are illustrative, not a fixed list;
+  funding must always be verified at the specific program/track level).
+- **Evidence over fabrication** — every admission/funding fact shown to a
+  user carries a source, a retrieval date, and a verification status; a
+  field with no verified source shows as "not yet verified," never a
+  guess.
+
+Where the pieces stand today, and what's still missing between the
+built ingestion pipeline and an actual recommendation product:
+
+![Architecture and vision](docs/architecture-vision.svg)
+
+(Editable source: [docs/architecture-vision.drawio](docs/architecture-vision.drawio),
+open at [diagrams.net](https://app.diagrams.net).)
+
 ## Status
 
 Implemented so far:
@@ -32,17 +65,35 @@ Implemented so far:
 - Review/provenance pipeline schema (Phase 2.2A — schema only): see
   `src/us_grad_recommender/models/review.py`. `parsed_documents`,
   `data_review_tasks`, `data_conflicts`.
+- Catalog adapter framework (Phase 2.2B): the `CatalogAdapter` protocol plus
+  `CourseLeafAdapter` (HTML) and `PdfCatalogAdapter` (PDF, incl. encrypted
+  PDFs) — see `src/us_grad_recommender/catalog_adapters/`. These parse
+  already-fetched page/document bytes into raw program/degree/requirement
+  candidates; they do not themselves crawl or fetch pages.
+- Parser pipeline (Phase 2.2B): `ingest_program_degrees()` — turns raw
+  adapter output into `Program`/`DegreeType` rows with provenance and
+  automatic `data_review_task` creation on new/ambiguous rows — see
+  `src/us_grad_recommender/parser_pipeline.py`.
+- Review queue service layer (Phase 2.2B): create/list/resolve for review
+  tasks and data conflicts, with row locking — see
+  `src/us_grad_recommender/review_queue.py`. No review UI yet; this is the
+  backend only.
 - A minimal read-only frontend (`web/`) — institution search + detail
   pages over the API above. No program/funding/recommendation UI; see
   "Running the frontend" below.
 
-All of the schema/data items above are currently empty; nothing populates them until the
-adapter framework and parser pipeline are built (Phase 2.2B+) and the
-pilot runs (Phase 2.3).
+The IPEDS-backed institution index is populated (see "Running the
+importer" below). The program/catalog and review schemas, and the
+adapters/parser/review-queue code that writes to them, are built but not
+yet run against real catalogs at scale — no program-level data exists in
+the database yet. A small (5–10 school), provenance-tracked real-data
+pilot is the next planned step (Phase 2.3).
 
-Not yet implemented: catalog adapters, parser pipeline, HTML/PDF parsing,
-network fetching, a review UI, automatic verification-status transitions,
-funding, community data ingestion, image parsing, recommendation logic.
+Not yet implemented: network fetching (the adapters parse bytes already
+in hand; nothing crawls catalog URLs yet), a review UI, automatic
+verification-status transitions, tuition/funding/visa-eligibility schema
+(proposed, not yet approved/migrated), community data ingestion, image
+parsing, recommendation logic.
 See `docs/FULL_HANDOFF.md` §20–21 and `docs/PHASE_2_CATALOG_DESIGN.md` for
 the roadmap.
 

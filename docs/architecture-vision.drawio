@@ -1,0 +1,105 @@
+<mxfile host="app.diagrams.net" modified="2026-08-23T17:00:00.000Z" agent="claude-code" version="24.0.0">
+  <diagram name="Architecture and Vision" id="arch-vision">
+    <mxGraphModel dx="1400" dy="900" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1300" pageHeight="1000" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+
+        <!-- Tier labels -->
+        <mxCell id="lbl1" value="Data sources" style="text;html=1;align=left;verticalAlign=middle;fontStyle=1;fontSize=13;fontColor=#666666;" vertex="1" parent="1">
+          <mxGeometry x="20" y="30" width="200" height="20" as="geometry" />
+        </mxCell>
+        <mxCell id="lbl2" value="Ingestion pipeline — built" style="text;html=1;align=left;verticalAlign=middle;fontStyle=1;fontSize=13;fontColor=#2e7d32;" vertex="1" parent="1">
+          <mxGeometry x="20" y="150" width="300" height="20" as="geometry" />
+        </mxCell>
+        <mxCell id="lbl3" value="Program-level facts — mixed status (see boxes)" style="text;html=1;align=left;verticalAlign=middle;fontStyle=1;fontSize=13;fontColor=#b8860b;" vertex="1" parent="1">
+          <mxGeometry x="20" y="330" width="450" height="20" as="geometry" />
+        </mxCell>
+        <mxCell id="lbl4" value="Recommendation product — planned" style="text;html=1;align=left;verticalAlign=middle;fontStyle=1;fontSize=13;fontColor=#8b0000;" vertex="1" parent="1">
+          <mxGeometry x="20" y="490" width="400" height="20" as="geometry" />
+        </mxCell>
+
+        <!-- Tier 1: data sources -->
+        <mxCell id="src1" value="IPEDS survey data&#10;(HD + EF, real, downloaded)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="1">
+          <mxGeometry x="20" y="60" width="220" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="src2" value="Institution catalog pages&#10;(CourseLeaf sites, PDF catalogs)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="1">
+          <mxGeometry x="280" y="60" width="240" height="70" as="geometry" />
+        </mxCell>
+
+        <!-- Tier 2: built pipeline -->
+        <mxCell id="p1" value="Institution Index ✅&#10;2,113 real institutions&#10;(Carnegie class, sector, enrollment)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;" vertex="1" parent="1">
+          <mxGeometry x="20" y="180" width="220" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="p2" value="Catalog Adapters ✅&#10;CourseLeafAdapter, PdfCatalogAdapter" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;" vertex="1" parent="1">
+          <mxGeometry x="280" y="180" width="220" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="p3" value="Parser Pipeline ✅&#10;RawProgramCandidate → Program rows" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;" vertex="1" parent="1">
+          <mxGeometry x="540" y="180" width="220" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="p4" value="Review Queue ✅&#10;human verification before trusted&#10;(no auto-promotion)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;" vertex="1" parent="1">
+          <mxGeometry x="800" y="180" width="220" height="80" as="geometry" />
+        </mxCell>
+
+        <!-- Tier 3: mixed status -->
+        <mxCell id="facts_academic" value="Academic Requirements&#10;GPA · GRE policy · TOEFL/IELTS&#10;schema exists (program_tracks, Phase 2.1)&#10;— columns unpopulated. 🚧 needs pilot data, not new schema" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;" vertex="1" parent="1">
+          <mxGeometry x="280" y="360" width="230" height="100" as="geometry" />
+        </mxCell>
+        <mxCell id="facts_cost" value="Cost / Funding / Visa&#10;Tuition · Funding/Assistantship · Visa/I-20 eligibility&#10;design proposal only —&#10;no schema/migration yet (§8.1)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#999999;dashed=1;" vertex="1" parent="1">
+          <mxGeometry x="530" y="360" width="230" height="100" as="geometry" />
+        </mxCell>
+
+        <!-- Tier 4: product -->
+        <mxCell id="prof" value="Applicant Profile&#10;background · test scores · budget ·&#10;field of study · funding need" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;" vertex="1" parent="1">
+          <mxGeometry x="20" y="520" width="220" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="rec" value="Recommendation Engine 🚧&#10;(not yet built)&#10;Prestige / Funding / Balanced modes" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;" vertex="1" parent="1">
+          <mxGeometry x="320" y="520" width="240" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="portfolio" value="Portfolio of 10 programs&#10;3 Reach · 4 Target · 3 Safety&#10;(never fewer than 2 safety)&#10;— with evidence + main risk, not 300 results" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;" vertex="1" parent="1">
+          <mxGeometry x="640" y="520" width="280" height="90" as="geometry" />
+        </mxCell>
+
+        <!-- Mission callout -->
+        <mxCell id="mission" value="Mission: help applicants discover U.S. master's opportunities&#10;— including overlooked regional/research universities with real funding —&#10;that fit their academic profile, budget, and goals, using recent evidence&#10;instead of incomplete lists or subjective agency advice." style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#999999;dashed=1;fontStyle=2;align=left;spacingLeft=10;" vertex="1" parent="1">
+          <mxGeometry x="20" y="640" width="900" height="80" as="geometry" />
+        </mxCell>
+
+        <!-- Edges -->
+        <mxCell id="e1" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;" edge="1" parent="1" source="src1" target="p1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e2" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;" edge="1" parent="1" source="src2" target="p2">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e3" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;" edge="1" parent="1" source="p2" target="p3">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e4" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;" edge="1" parent="1" source="p3" target="p4">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e5" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;" edge="1" parent="1" source="p4" target="facts_academic">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e5b" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;" edge="1" parent="1" source="p4" target="facts_cost">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e6" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;dashed=1;" edge="1" parent="1" source="p1" target="rec">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e7" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;dashed=1;" edge="1" parent="1" source="facts_academic" target="rec">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e7b" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;dashed=1;" edge="1" parent="1" source="facts_cost" target="rec">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e8" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;" edge="1" parent="1" source="prof" target="rec">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e9" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;" edge="1" parent="1" source="rec" target="portfolio">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>
