@@ -65,17 +65,35 @@ Implemented so far:
 - Review/provenance pipeline schema (Phase 2.2A — schema only): see
   `src/us_grad_recommender/models/review.py`. `parsed_documents`,
   `data_review_tasks`, `data_conflicts`.
+- Catalog adapter framework (Phase 2.2B): the `CatalogAdapter` protocol plus
+  `CourseLeafAdapter` (HTML) and `PdfCatalogAdapter` (PDF, incl. encrypted
+  PDFs) — see `src/us_grad_recommender/catalog_adapters/`. These parse
+  already-fetched page/document bytes into raw program/degree/requirement
+  candidates; they do not themselves crawl or fetch pages.
+- Parser pipeline (Phase 2.2B): `ingest_program_degrees()` — turns raw
+  adapter output into `Program`/`DegreeType` rows with provenance and
+  automatic `data_review_task` creation on new/ambiguous rows — see
+  `src/us_grad_recommender/parser_pipeline.py`.
+- Review queue service layer (Phase 2.2B): create/list/resolve for review
+  tasks and data conflicts, with row locking — see
+  `src/us_grad_recommender/review_queue.py`. No review UI yet; this is the
+  backend only.
 - A minimal read-only frontend (`web/`) — institution search + detail
   pages over the API above. No program/funding/recommendation UI; see
   "Running the frontend" below.
 
-All of the schema/data items above are currently empty; nothing populates them until the
-adapter framework and parser pipeline are built (Phase 2.2B+) and the
-pilot runs (Phase 2.3).
+The IPEDS-backed institution index is populated (see "Running the
+importer" below). The program/catalog and review schemas, and the
+adapters/parser/review-queue code that writes to them, are built but not
+yet run against real catalogs at scale — no program-level data exists in
+the database yet. A small (5–10 school), provenance-tracked real-data
+pilot is the next planned step (Phase 2.3).
 
-Not yet implemented: catalog adapters, parser pipeline, HTML/PDF parsing,
-network fetching, a review UI, automatic verification-status transitions,
-funding, community data ingestion, image parsing, recommendation logic.
+Not yet implemented: network fetching (the adapters parse bytes already
+in hand; nothing crawls catalog URLs yet), a review UI, automatic
+verification-status transitions, tuition/funding/visa-eligibility schema
+(proposed, not yet approved/migrated), community data ingestion, image
+parsing, recommendation logic.
 See `docs/FULL_HANDOFF.md` §20–21 and `docs/PHASE_2_CATALOG_DESIGN.md` for
 the roadmap.
 
