@@ -200,7 +200,13 @@ def test_non_4_0_gpa_scale_falls_back_neutrally_not_naive_subtraction(db_session
         status=EntityStatus.ACTIVE,
         last_verified_at=TODAY,
     )
-    track = ProgramTrack(program=program, track_name="Thesis", min_gpa=3.0, last_verified_at=TODAY)
+    track = ProgramTrack(
+        program=program,
+        track_name="Thesis",
+        min_gpa=3.0,
+        verification_status=VerificationStatus.DOCUMENT_VERIFIED,
+        last_verified_at=TODAY,
+    )
     db_session.add_all([unit, degree_type, program, track])
     db_session.commit()
     catalog = _load_catalog_by_unitid(db_session)
@@ -321,6 +327,45 @@ def test_unverified_institution_side_fact_lowers_confidence_not_excluded(db_sess
     # unprovided optional preference.
     assert result.component_scores["reputation_fit"] is not None
     assert result.component_scores["reputation_fit"] == 60.0
+
+
+def test_raw_min_gpa_falls_back_neutrally_not_scored_as_trustworthy(db_session):
+    """Regression for a real MEDIUM finding: a RAW (freshly-ingested,
+    human-unreviewed — PHASE_2_CATALOG_DESIGN.md §2.1) min_gpa was
+    previously fed straight into the real academic_fit bucket
+    computation, with only the separate `verified` flag (feeding
+    data_confidence) reflecting the caveat. §5.2(b) says an unverified
+    institution-side fact should use the neutral fallback *value*, not
+    the raw number scored as if trustworthy."""
+    unitid = 910017
+    university = make_university(unitid)
+    db_session.add(university)
+    db_session.flush()
+    unit = make_academic_unit(unitid)
+    degree_type = make_degree_type()
+    program = Program(
+        academic_unit=unit,
+        degree_type=degree_type,
+        raw_degree_name="M.S.",
+        canonical_name="Computer Science",
+        status=EntityStatus.ACTIVE,
+        last_verified_at=TODAY,
+    )
+    # No explicit verification_status -> defaults to RAW (models/common.py).
+    track = ProgramTrack(
+        program=program,
+        track_name="Thesis",
+        min_gpa=2.5,  # would otherwise comfortably clear gpa=3.6
+        last_verified_at=TODAY,
+    )
+    db_session.add_all([unit, degree_type, program, track])
+    db_session.commit()
+
+    catalog = _load_catalog_by_unitid(db_session)
+    result = score_university(catalog, university, base_profile())
+
+    assert result.component_scores["academic_fit"] == 60.0
+    assert result.is_comfortable_fit is False
 
 
 def test_carnegie_not_applicable_sentinel_treated_as_unknown(db_session):
@@ -446,6 +491,25 @@ def test_recommend_is_deterministic_and_sorted(db_session):
     assert [r.match_score for r in first_pass] == [r.match_score for r in second_pass]
     scores = [r.match_score for r in first_pass]
     assert scores == sorted(scores, reverse=True)
+
+
+def test_recommend_tie_break_is_by_unitid_not_row_order(db_session):
+    """Regression for a real HIGH finding: with no program data, every
+    university here resolves to an identical match_score (all-neutral
+    fallback components) — sorting on score alone leaves which ones rank
+    where dependent on unspecified DB row order. Deliberately inserted
+    out of unitid order to make sure the tie-break isn't accidentally
+    "whatever order they were inserted in.\""""
+    unitids = [925003, 925001, 925004, 925000, 925002]
+    for uid in unitids:
+        db_session.add(make_university(uid, canonical_name=f"Tie Uni {uid}"))
+    db_session.commit()
+
+    results = recommend(db_session, base_profile())
+
+    scores = {r.match_score for r in results}
+    assert len(scores) == 1  # sanity check: this test actually exercises a full tie
+    assert [r.unitid for r in results] == sorted(unitids)
 
 
 def test_recommend_excludes_institutions_below_requested_degree_level(db_session):

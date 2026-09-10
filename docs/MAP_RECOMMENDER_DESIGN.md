@@ -258,7 +258,13 @@ means. `overall_score ∈ [0, 100]`.
 - Ranking is 100% deterministic and testable — no ML, no LLM in the
   scoring path. An LLM may eventually help *explain* a result in
   natural language, but never determines or adjusts the score itself
-  (locked in explicitly, not just a v1-convenience default).
+  (locked in explicitly, not just a v1-convenience default). Every sort
+  in the ranking pipeline uses an explicit tie-break (`unitid`
+  ascending, after `match_score` descending) — with today's sparse
+  program data, many institutions collapse to an identical score, and
+  without a defined secondary key, which ones land in the top 20 would
+  depend on unspecified database row order rather than being
+  reproducible across calls.
 - Every response includes both the aggregate score/confidence *and*
   the per-component breakdown (`academic_fit`, `cost_fit`, etc.),
   plus structured explanation lists — see §5.5's full response shape.

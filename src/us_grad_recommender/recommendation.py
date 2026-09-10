@@ -316,6 +316,13 @@ def _score_academic_fit(
         # conversion, which FULL_HANDOFF.md §0/§9/§23 explicitly forbid.
         # Fall back neutrally rather than guess at a conversion.
         return ComponentScore(_NEUTRAL_FALLBACK, verified=False)
+    if not match.min_gpa_verified:
+        # §5.2(b): an unverified institution-side fact (still RAW,
+        # nothing has reviewed/parsed it yet — PHASE_2_CATALOG_DESIGN.md
+        # §2.1) uses the neutral fallback *value*, not the raw number
+        # itself scored as if trustworthy. Only the confidence signal
+        # differing was the earlier (wrong) behavior.
+        return ComponentScore(_NEUTRAL_FALLBACK, verified=False)
     diff = gpa - float(match.min_gpa)
     if diff >= 0.3:
         value = 90.0
@@ -325,13 +332,18 @@ def _score_academic_fit(
         value = 50.0
     else:
         value = 25.0
-    return ComponentScore(value, verified=match.min_gpa_verified)
+    return ComponentScore(value, verified=True)
 
 
 def _score_cost_fit(budget_max_usd: Optional[float], match: _ProgramMatch) -> ComponentScore:
     if budget_max_usd is None:
         return ComponentScore(None)  # user didn't ask — excluded, not zeroed (§5.2a)
     if match.estimated_annual_cost_usd is None:
+        return ComponentScore(_NEUTRAL_FALLBACK, verified=False)
+    if not match.cost_verified:
+        # §5.2(b), same reasoning as _score_academic_fit above: a RAW,
+        # unreviewed cost figure falls back to the neutral value, not
+        # the raw number scored as if trustworthy.
         return ComponentScore(_NEUTRAL_FALLBACK, verified=False)
     cost = float(match.estimated_annual_cost_usd)
     if cost <= budget_max_usd:
@@ -340,7 +352,7 @@ def _score_cost_fit(budget_max_usd: Optional[float], match: _ProgramMatch) -> Co
         value = 55.0
     else:
         value = 20.0
-    return ComponentScore(value, verified=match.cost_verified)
+    return ComponentScore(value, verified=True)
 
 
 def normalize_carnegie_classification(carnegie_classification: Optional[int]) -> Optional[int]:
@@ -805,10 +817,17 @@ def recommend(
     eligible = [u for u in universities if _degree_level_eligible(u, profile.degree_level)]
     catalog_by_unitid = _load_catalog_by_unitid(session)
     scored = [score_university(catalog_by_unitid, u, profile) for u in eligible]
-    scored.sort(key=lambda s: s.match_score, reverse=True)
+    # Deterministic tie-break (§5.1): with today's sparse program data,
+    # many institutions collapse to an identical match_score, and the
+    # raw University query above carries no ORDER BY — sorting on
+    # match_score alone would leave which ones land in the top 20
+    # dependent on unspecified Postgres row order. unitid as a secondary
+    # key makes the ranking reproducible across calls, same fix already
+    # applied to _load_catalog_by_unitid's query for the same reason.
+    scored.sort(key=lambda s: (-s.match_score, s.unitid))
 
     final_set = _apply_comfortable_fit_floor(scored, limit)
-    final_set.sort(key=lambda s: s.match_score, reverse=True)
+    final_set.sort(key=lambda s: (-s.match_score, s.unitid))
 
     return [
         dataclasses.replace(
