@@ -481,6 +481,11 @@ get in").
 
 ### 5.9 Comfortable-fit floor (added 2026-09-11)
 
+`FULL_HANDOFF.md` §1/§8 are amended (2026-09-11) with pointers back to
+this section, so the two documents don't silently disagree — §8's full
+portfolio model is not superseded, just not yet built; this section is
+the honest v1 partial answer.
+
 **Why this exists:** `FULL_HANDOFF.md` §8 ("Recommendation Portfolio")
 mandates constrained portfolio optimization — reach/target/safety
 quotas, a minimum safety count, diversity, avoiding correlated failure
