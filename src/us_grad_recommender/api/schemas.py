@@ -131,7 +131,14 @@ class RecommendationProfileIn(BaseModel):
     )
     priority: PriorityPreset = PriorityPreset.BALANCED
     budget_max_usd: Optional[float] = Field(default=None, ge=0)
-    preferred_states: Optional[List[str]] = Field(default=None, min_length=1)
+    preferred_states: Optional[List[str]] = Field(
+        default=None,
+        min_length=1,
+        description=(
+            "Hard filter, not a soft preference — set means the shortlist is "
+            "restricted to these states only; unset means nationwide."
+        ),
+    )
 
     @model_validator(mode="after")
     def _check_degree_level_matches_category(self) -> RecommendationProfileIn:

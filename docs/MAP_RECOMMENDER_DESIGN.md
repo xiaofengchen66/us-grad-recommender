@@ -2,9 +2,12 @@
 
 Status: **approved 2026-09-10, ranking model revised 2026-09-11
 (§5.8 — top-20 shortlist replacing the original broad percentile-tier
-output).** PR #14 (`feature/recommend-wizard-mock-data`, the 4-step
-wizard + mock results page) has been **closed**, not reworked — it is
-superseded by this design. Implementation proceeds per the phase
+output; §5.9 — comfortable-fit floor added to answer FULL_HANDOFF.md
+§8's minimum-safety-count requirement; §5.4 — geographic preference
+reworked from a soft score into a hard candidate-pool filter).** PR #14
+(`feature/recommend-wizard-mock-data`, the 4-step wizard + mock
+results page) has been **closed**, not reworked — it is superseded by
+this design. Implementation proceeds per the phase
 breakdown in §16, starting with Phase 3.0.
 
 This document is the required design-before-code artifact for the
@@ -336,7 +339,36 @@ reverse-engineer "was this actually confirmed?" from a single number.
 | `program_fit` | always (program category/name is required input) |
 | `reputation_fit` | always (Carnegie/institution-type data exists for essentially every row; falls back neutrally per §5.2(b) on the rare null) |
 | `cost_fit` | only if the user provided a budget |
-| `location_fit` | only if the user provided region/state preference |
+
+**Geographic preference is not a scoring component at all — revised
+2026-09-11.** The original design treated `preferred_states` like the
+other optional preferences (excluded from the denominator when unset,
+soft-scored when set, via a `location_fit` component). Real-world
+counterexample that changed this: a student who says *"I only want
+schools in New York and California"* means exactly that — a school
+outside those states must never appear in the shortlist, no matter how
+well it scores on every other axis. A soft `location_fit` bonus would
+let a high-scoring out-of-state school back in, directly contradicting
+a stated hard requirement. So:
+
+- `preferred_states` set → the candidate pool is hard-filtered to those
+  states **before** scoring/ranking even begins (`recommend()`,
+  `_geography_eligible()`). An institution with no recorded state is
+  excluded too when a preference is stated — state is essentially
+  always populated in this dataset (real IPEDS data), so this hard,
+  explicitly-stated requirement errs toward strictness rather than the
+  softer §5.2(b) tolerance used for genuinely sparse program-level
+  facts.
+- `preferred_states` unset → nationwide, unrestricted, and still no
+  location-based scoring (there's no stated preference to score
+  against).
+- There is no `location_fit` component in either case — it would be
+  either redundant (true for every remaining candidate post-filter) or
+  actively wrong (letting an excluded school's high score buy it back
+  in). Budget remains a *soft* preference (§5.2), deliberately not
+  filtered the same way, since a school slightly over budget is a much
+  more continuous, less binary judgment than being in the wrong state
+  entirely.
 
 ### 5.5 Full response shape per scored institution
 
@@ -353,17 +385,16 @@ bare number:
   "data_confidence": "medium",
   "category": "good_fit",
   "is_primary_shortlist": true,
+  "is_comfortable_fit": true,
   "program_availability": "confirmed",
   "component_scores": {
     "academic_fit": 78,
     "cost_fit": null,
-    "location_fit": 90,
     "reputation_fit": 65,
     "program_fit": 88
   },
   "positive_reasons": [
-    "Has the requested CS graduate program",
-    "Located in your preferred region"
+    "Has the requested CS graduate program"
   ],
   "warnings": [
     "GRE information not verified"
@@ -447,6 +478,62 @@ the first place, restated more strongly this round: the new label set
 (`top_fit`/`good_fit`/`explore`) was deliberately chosen to read as
 "how well it matches what you asked for," never as "how hard it is to
 get in").
+
+### 5.9 Comfortable-fit floor (added 2026-09-11)
+
+**Why this exists:** `FULL_HANDOFF.md` §8 ("Recommendation Portfolio")
+mandates constrained portfolio optimization — reach/target/safety
+quotas, a minimum safety count, diversity, avoiding correlated failure
+risk — and explicitly forbids "simply select the top N independent
+scores." A pure top-20-by-`match_score` ranking (§5.8 as first
+implemented) is exactly that forbidden pattern. §8's own
+reach/target/safety buckets are themselves admission-probability
+ranges (10–35% / 35–70% / >70%), which directly conflicts with §5.0's
+no-admission-probability rule — that conflict is resolved by this
+section using only real data already in the schema, not by resurrecting
+probability language.
+
+**Definition — "comfortable fit," not "safety":** an institution/program
+is comfortable-fit if and only if its `academic_fit` component is
+`>= 75` (the highest defined bucket — GPA is 0.3+ above the stated
+minimum) **and** that comparison rests on a verified
+`ProgramTrack.min_gpa` (not a §5.2(b) neutral fallback). This is a
+statement about "your GPA comfortably clears a real, sourced
+requirement" — it says nothing about competition, applicant volume, or
+actual admission odds, and is exposed as its own field
+(`is_comfortable_fit: bool`), never folded silently into `match_score`.
+
+**The floor:** at least `MIN_COMFORTABLE_FIT_COUNT` (3, reusing §8's own
+Balanced-portfolio safety count rather than inventing a new number)
+comfortable-fit results must appear in the top 20. If the naive
+top-20-by-score already has 3+, nothing changes. Otherwise, the
+highest-`match_score` comfortable-fit candidates *outside* the naive
+top 20 are swapped in, displacing only the **lowest-ranked
+non-comfortable** entries already there (rank 1 is never displaced).
+If fewer than 3 comfortable-fit candidates exist in the whole eligible
+pool, the floor includes as many as actually exist — it never
+fabricates comfortable options that aren't real.
+
+**Explainability:** every swapped-in entry gets an explicit line
+appended to its own `positive_reasons` (e.g. *"Included to ensure your
+shortlist has comfortably-verified options"*) — never a silent reorder
+the user has to infer.
+
+**What this does *not* cover, on purpose:** diversity across
+institutions/funding mechanisms, and avoiding correlated failure risk
+(§8's other portfolio requirements) are **explicitly deferred**, not
+built here. A geography-based diversity cap was considered and
+rejected: if a student states a geographic preference at all (§5.4),
+it's a hard filter already — e.g. a student who genuinely wants
+California-only should get every good California match, not have some
+arbitrarily removed by a "max N per state" rule fighting their actual
+stated intent. True funding-mechanism diversity and single-point-of-
+failure detection (e.g. a program depending on one professor) need
+program/funding-level data that exists as schema (`admission_requirements`
+`FUNDING` type, PR #16) but is still unpopulated — building a diversity
+rule on top of data we don't have yet would be exactly the kind of
+false precision this whole design has tried to avoid. Revisit once
+Phase 2.3/3.4 populate real funding facts.
 
 ## 6. Institution/program data model changes
 
@@ -690,9 +777,11 @@ Why it matches you
 ✓ GPA is within a plausible range          (academic_fit component high, GPA verified)
 ✓ Offers an MS in Computer Science          (program exists, verified)
 ✓ Tuition is within your selected budget    (cost_fit component high, cost verified)
-✓ Located in your preferred region          (location_fit component high)
 △ GRE policy not yet verified               (component used neutral fallback, §5.1)
 ```
+(No "located in your preferred region" line — geography is a hard
+filter now, §5.4: every result the user sees already satisfies it, so
+restating it on every card would be constant, undifferentiating noise.)
 Checkmarks (✓) only for verified-and-favorable components;
 triangles (△) for anything driven by a fallback/unverified value —
 this is the concrete mechanism that keeps the confidence system honest

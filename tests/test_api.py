@@ -216,11 +216,14 @@ def test_recommendations_minimal_profile(client, seeded):
     for result in body["results"]:
         assert 0 <= result["match_score"] <= 100
         assert "admission_probability" not in result
+        assert "location_fit" not in result["component_scores"]  # hard filter, not a score
         assert result["component_scores"]["cost_fit"] is None  # no budget provided
-        assert result["component_scores"]["location_fit"] is None  # no region provided
 
 
-def test_recommendations_with_budget_and_location(client, seeded):
+def test_recommendations_preferred_states_hard_filters_out_other_states(client, seeded):
+    """UT Austin (TX) and Alabama A&M (AL) are both masters-granting in the
+    seeded fixture — restricting to TX must exclude Alabama A&M entirely,
+    not just deprioritize it."""
     response = client.post(
         "/recommendations",
         json={
@@ -235,8 +238,8 @@ def test_recommendations_with_budget_and_location(client, seeded):
     )
     assert response.status_code == 200
     body = response.json()
-    for result in body["results"]:
-        assert result["component_scores"]["location_fit"] is not None
+    unitids = {r["unitid"] for r in body["results"]}
+    assert unitids == {228778}
 
 
 def test_recommendations_rejects_missing_required_field(client, seeded):

@@ -169,8 +169,8 @@ def test_partial_availability_when_unit_exists_but_no_program(db_session):
 
 def test_missing_optional_preference_excluded_not_zeroed(db_session):
     """The core correctness rule from the design doc §5.2: not providing
-    budget/location must exclude that component from the score entirely,
-    not silently score it as 0."""
+    an optional preference like budget must exclude that component from
+    the score entirely, not silently score it as 0."""
     unitid = 910004
     university = make_university(unitid)
     db_session.add(university)
@@ -180,9 +180,6 @@ def test_missing_optional_preference_excluded_not_zeroed(db_session):
     no_budget = score_university(catalog, university, base_profile(budget_max_usd=None))
     assert no_budget.component_scores["cost_fit"] is None
 
-    no_location = score_university(catalog, university, base_profile(preferred_states=None))
-    assert no_location.component_scores["location_fit"] is None
-
     # Excluding a component must not be equivalent to scoring it 0 — the
     # overall score with cost excluded should differ from (generally be
     # higher than) the same profile with an obviously-unaffordable budget.
@@ -191,6 +188,25 @@ def test_missing_optional_preference_excluded_not_zeroed(db_session):
     )
     assert with_bad_budget.component_scores["cost_fit"] is not None
     assert with_bad_budget.match_score < no_budget.match_score
+
+
+def test_no_location_fit_component_geography_is_a_filter_not_a_score(db_session):
+    """§5.4 (revised 2026-09-11): geographic preference is a hard filter
+    on the candidate pool, not a scoring component — there is no
+    location_fit key at all, regardless of whether preferred_states is
+    set."""
+    unitid = 910011
+    university = make_university(unitid, state="TX")
+    db_session.add(university)
+    db_session.commit()
+    catalog = _load_catalog_by_unitid(db_session)
+
+    without_pref = score_university(catalog, university, base_profile(preferred_states=None))
+    with_pref = score_university(
+        catalog, university, base_profile(preferred_states=("TX",))
+    )
+    assert "location_fit" not in without_pref.component_scores
+    assert "location_fit" not in with_pref.component_scores
 
 
 def test_unverified_institution_side_fact_lowers_confidence_not_excluded(db_session):
@@ -351,6 +367,162 @@ def test_recommend_excludes_institutions_below_requested_degree_level(db_session
     unitids = {r.unitid for r in results}
     assert 930002 in unitids
     assert 930001 not in unitids
+
+
+def test_preferred_states_is_a_hard_filter_not_a_soft_preference(db_session):
+    """The exact scenario that motivated this design: a student who says
+    "only NY and CA" must never see an out-of-state school, even one that
+    would otherwise outscore everything in-state on every other axis."""
+    in_state = make_university(970001, state="CA", carnegie_classification=15)
+    out_of_state = make_university(970002, state="WA", carnegie_classification=15)
+    db_session.add_all([in_state, out_of_state])
+    db_session.commit()
+
+    results = recommend(db_session, base_profile(preferred_states=("CA", "NY")))
+
+    unitids = {r.unitid for r in results}
+    assert 970001 in unitids
+    assert 970002 not in unitids
+
+
+def test_preferred_states_excludes_unknown_state_institutions(db_session):
+    """A hard, explicitly-stated geographic requirement should err toward
+    strictness on a field (state) that's essentially always populated in
+    this dataset — unlike the softer tolerance for genuinely sparse
+    program-level facts elsewhere in the engine."""
+    unknown_state = make_university(970003, state=None)
+    db_session.add(unknown_state)
+    db_session.commit()
+
+    results = recommend(db_session, base_profile(preferred_states=("CA",)))
+
+    assert 970003 not in {r.unitid for r in results}
+
+
+def test_comfortable_fit_floor_backfills_when_naturally_absent(db_session):
+    """§5.9: if fewer than MIN_COMFORTABLE_FIT_COUNT of the naive top 20
+    are comfortable-fit, the engine must pull in verified-GPA candidates
+    from outside the naive top rather than leaving the shortlist without
+    any comfortable options.
+
+    academic_fit and program_fit are coupled (both depend on finding a
+    matched Program/ProgramTrack), so to make 20 "distractor" schools
+    genuinely outscore one comfortable-fit school without themselves
+    becoming comfortable-fit, distractors win on cost_fit instead:
+    verified low cost, but no min_gpa on file (academic_fit stays
+    neutral/unverified, so distractors never qualify as comfortable-fit).
+    """
+    degree_type = make_degree_type()
+    db_session.add(degree_type)
+    db_session.flush()
+
+    for i in range(20):
+        unitid = 980000 + i
+        university = make_university(unitid, carnegie_classification=15)
+        db_session.add(university)
+        db_session.flush()
+        unit = make_academic_unit(unitid)
+        program = Program(
+            academic_unit=unit,
+            degree_type=degree_type,
+            raw_degree_name="M.S.",
+            canonical_name="Computer Science",
+            status=EntityStatus.ACTIVE,
+            last_verified_at=TODAY,
+        )
+        track = ProgramTrack(
+            program=program,
+            track_name="Thesis",
+            estimated_annual_cost_usd=5000,  # well under the 30000 budget below
+            verification_status=VerificationStatus.DOCUMENT_VERIFIED,
+            last_verified_at=TODAY,
+        )
+        db_session.add_all([unit, program, track])
+
+    # One additional university with a real, verified, comfortably-clearable
+    # GPA requirement but no cost data, weaker reputation, and a lower
+    # overall score than every distractor above.
+    comfortable_uid = 981000
+    comfortable_university = make_university(comfortable_uid, carnegie_classification=None)
+    db_session.add(comfortable_university)
+    db_session.flush()
+    unit = make_academic_unit(comfortable_uid)
+    program = Program(
+        academic_unit=unit,
+        degree_type=degree_type,
+        raw_degree_name="M.S.",
+        canonical_name="Computer Science",
+        status=EntityStatus.ACTIVE,
+        last_verified_at=TODAY,
+    )
+    track = ProgramTrack(
+        program=program,
+        track_name="Thesis",
+        min_gpa=2.5,  # comfortably below profile's gpa=3.6 -> diff >= 0.3
+        verification_status=VerificationStatus.DOCUMENT_VERIFIED,
+        last_verified_at=TODAY,
+    )
+    db_session.add_all([unit, program, track])
+    db_session.commit()
+
+    profile = base_profile(budget_max_usd=30000)
+    scored_without_floor = score_university(
+        _load_catalog_by_unitid(db_session), comfortable_university, profile
+    )
+    distractor_score = score_university(
+        _load_catalog_by_unitid(db_session),
+        db_session.get(University, 980000),
+        profile,
+    ).match_score
+    # Sanity-check the setup actually exercises the floor (comfortable
+    # school ranks below the distractors on raw score alone) rather than
+    # accidentally passing because it topped the naive ranking anyway.
+    assert scored_without_floor.match_score < distractor_score
+
+    results = recommend(db_session, profile)
+
+    result = next(r for r in results if r.unitid == comfortable_uid)
+    assert result.is_comfortable_fit is True
+    assert any("comfortably-verified" in reason for reason in result.positive_reasons)
+    # This test's data only provides one comfortable-fit candidate total,
+    # so the floor can only backfill up to what actually exists — it
+    # should include exactly that one, not fabricate more.
+    assert len([r for r in results if r.is_comfortable_fit]) == 1
+
+
+def test_comfortable_fit_floor_no_op_when_already_satisfied(db_session):
+    """When the naive top 20 already has enough comfortable-fit results,
+    the floor must not reorder or tag anything."""
+    for i in range(5):
+        unitid = 982000 + i
+        university = make_university(unitid, carnegie_classification=None)
+        db_session.add(university)
+        db_session.flush()
+        unit = make_academic_unit(unitid)
+        degree_type = make_degree_type(code=f"MS{i}")
+        program = Program(
+            academic_unit=unit,
+            degree_type=degree_type,
+            raw_degree_name="M.S.",
+            canonical_name="Computer Science",
+            status=EntityStatus.ACTIVE,
+            last_verified_at=TODAY,
+        )
+        track = ProgramTrack(
+            program=program,
+            track_name="Thesis",
+            min_gpa=2.5,
+            verification_status=VerificationStatus.DOCUMENT_VERIFIED,
+            last_verified_at=TODAY,
+        )
+        db_session.add_all([unit, degree_type, program, track])
+    db_session.commit()
+
+    results = recommend(db_session, base_profile())
+
+    assert all(
+        "comfortably-verified" not in " ".join(r.positive_reasons) for r in results
+    )
 
 
 def test_match_score_never_framed_as_probability(db_session):

@@ -6,11 +6,16 @@ restated at the call sites below rather than only in the doc:
 - `match_score` is never, and must never be treated as, an admission
   probability (§5.0). It is a match/relevance score against the
   student's stated profile and preferences, nothing else.
-- A component the user didn't ask about (no budget/region given) is
-  excluded from the scoring denominator entirely — see `_weighted_average`
-  and the `None` sentinel used throughout. A component the user did ask
+- A component the user didn't ask about (no budget given) is excluded
+  from the scoring denominator entirely — see `_weighted_average` and
+  the `None` sentinel used throughout. A component the user did ask
   about but where the institution-side fact is unverified stays active,
   using a neutral fallback, and lowers `data_confidence` instead (§5.2).
+- Geographic preference (`preferred_states`) is a hard filter on the
+  candidate pool, not a scoring component (§5.4, revised 2026-09-11) —
+  if a student says "only NY and CA," nothing outside those states can
+  appear no matter how well it scores. There is deliberately no
+  `location_fit` component.
 - Program existence at an institution is tracked separately
   (`ProgramAvailability`) from how well it scores (§5.3) — an
   institution with no program data on file is never presented as if a
@@ -23,6 +28,11 @@ restated at the call sites below rather than only in the doc:
   set, never by a score/confidence threshold. `data_confidence` stays
   independent of rank — a top-ranked result can still carry Low
   confidence and must still show it as such.
+- A comfortable-fit floor (§5.9, added 2026-09-11) guarantees at least
+  `MIN_COMFORTABLE_FIT_COUNT` results with a verified, comfortably-met
+  GPA requirement in the shortlist — answering FULL_HANDOFF.md §8's
+  "minimum safety count" using only data we actually have, with no
+  admission-probability judgment involved.
 """
 
 from __future__ import annotations
@@ -173,28 +183,24 @@ _PRESET_WEIGHTS: dict[PriorityPreset, dict[str, float]] = {
     PriorityPreset.RANKING: {
         "academic_fit": 1.0,
         "cost_fit": 1.0,
-        "location_fit": 1.0,
         "reputation_fit": 2.0,
         "program_fit": 1.5,
     },
     PriorityPreset.AFFORDABILITY: {
         "academic_fit": 1.0,
         "cost_fit": 2.5,
-        "location_fit": 1.0,
         "reputation_fit": 0.5,
         "program_fit": 1.5,
     },
     PriorityPreset.ADMISSION_FIT: {
         "academic_fit": 2.5,
         "cost_fit": 1.0,
-        "location_fit": 1.0,
         "reputation_fit": 0.5,
         "program_fit": 1.5,
     },
     PriorityPreset.BALANCED: {
         "academic_fit": 1.0,
         "cost_fit": 1.0,
-        "location_fit": 1.0,
         "reputation_fit": 1.0,
         "program_fit": 1.0,
     },
@@ -208,6 +214,19 @@ class RecommendationProfile:
     product profile (design doc §9) but not yet wired into scoring —
     deliberately left off this dataclass rather than accepted-and-ignored,
     so the engine's contract stays honest about what it actually uses.
+
+    `preferred_states` is a hard filter on the candidate pool (§5.4,
+    revised 2026-09-11), not a scoring component — if a student says "only
+    NY and CA," a school outside those states must never appear in the
+    shortlist no matter how well it scores otherwise. There is no
+    `location_fit` component for exactly this reason: once the candidate
+    pool is already restricted to preferred states, a soft "is this in a
+    preferred state" score would be redundant (true for every remaining
+    candidate) or, worse, would let an out-of-preference school back in
+    via a high overall score. When `preferred_states` is unset, the
+    candidate pool is unrestricted (nationwide) and there is still no
+    location-based scoring, since there is no stated preference to score
+    against.
     """
 
     degree_level: DegreeLevel
@@ -242,6 +261,7 @@ class ScoredInstitution:
     data_confidence: DataConfidence
     program_availability: ProgramAvailability
     component_scores: dict[str, Optional[float]]
+    is_comfortable_fit: bool
     rank: int = 0
     category: RecommendationCategory = RecommendationCategory.EXPLORE
     is_primary_shortlist: bool = False
@@ -297,18 +317,6 @@ def _score_cost_fit(budget_max_usd: Optional[float], match: _ProgramMatch) -> Co
     else:
         value = 20.0
     return ComponentScore(value, verified=match.cost_verified)
-
-
-def _score_location_fit(
-    preferred_states: Optional[tuple[str, ...]], state: Optional[str]
-) -> ComponentScore:
-    if not preferred_states:
-        return ComponentScore(None)  # user didn't ask — excluded (§5.2a)
-    if not state:
-        return ComponentScore(_NEUTRAL_FALLBACK, verified=False)
-    wanted = {s.upper() for s in preferred_states}
-    value = 95.0 if state.upper() in wanted else 40.0
-    return ComponentScore(value, verified=True)
 
 
 def _score_reputation_fit(carnegie_classification: Optional[int]) -> ComponentScore:
@@ -369,6 +377,13 @@ PRIMARY_SHORTLIST_SIZE = 15
 _TOP_FIT_CUTOFF = 5  # rank 1-5
 _GOOD_FIT_CUTOFF = 12  # rank 6-12; rank 13-20 -> EXPLORE
 
+# Comfortable-fit floor (§5.9, added 2026-09-11 to answer FULL_HANDOFF.md
+# §8's "minimum safety count" requirement without inventing an admission
+# probability): reuses §8's own Balanced-portfolio safety count (3) rather
+# than a new number.
+MIN_COMFORTABLE_FIT_COUNT = 3
+_COMFORTABLE_FIT_ACADEMIC_THRESHOLD = 75.0
+
 
 def _category_for_rank(rank: int) -> RecommendationCategory:
     """Rank-based, not score/confidence-based (§5.8) — see
@@ -414,9 +429,11 @@ def _build_reasons(
         else:
             unknown.append("Tuition/cost not yet verified")
 
-    location = components["location_fit"]
-    if location.value is not None and location.verified and location.value >= 75:
-        positive.append("Located in your preferred region")
+    # No location_fit reason here by design: when preferred_states is set,
+    # every candidate this function ever sees is already in a preferred
+    # state (hard-filtered in recommend(), §5.4) — restating that on every
+    # single result would be constant, undifferentiating noise, not a
+    # useful "why."
 
     return positive, warnings, unknown
 
@@ -558,7 +575,6 @@ def score_university(
     components = {
         "academic_fit": _score_academic_fit(profile.gpa, profile.gpa_scale, match),
         "cost_fit": _score_cost_fit(profile.budget_max_usd, match),
-        "location_fit": _score_location_fit(profile.preferred_states, university.state),
         "reputation_fit": _score_reputation_fit(university.carnegie_classification),
         "program_fit": _score_program_fit(match),
     }
@@ -566,6 +582,17 @@ def score_university(
     overall = _weighted_average(components, weights)
     confidence = _data_confidence(components)
     positive, warnings, unknown = _build_reasons(profile, match, components)
+
+    # "Comfortable fit" (§5.9): GPA comfortably clears a *verified*
+    # requirement — not an admission-probability judgment, just whether
+    # the academic_fit component landed in its highest bucket on real,
+    # sourced data rather than a neutral fallback guess.
+    academic = components["academic_fit"]
+    is_comfortable_fit = (
+        academic.value is not None
+        and academic.value >= _COMFORTABLE_FIT_ACADEMIC_THRESHOLD
+        and academic.verified
+    )
 
     # rank/category/is_primary_shortlist are placeholders here — only
     # recommend() knows an institution's position in the full ranked set
@@ -577,6 +604,7 @@ def score_university(
         data_confidence=confidence,
         program_availability=match.availability,
         component_scores={name: c.value for name, c in components.items()},
+        is_comfortable_fit=is_comfortable_fit,
         positive_reasons=positive,
         warnings=warnings,
         unknown_facts=unknown,
@@ -600,6 +628,72 @@ def _degree_level_eligible(university: University, degree_level: DegreeLevel) ->
     return True  # certificate/other: no institution-level signal to filter on yet
 
 
+def _geography_eligible(
+    university: University, preferred_states: Optional[tuple[str, ...]]
+) -> bool:
+    """Hard filter, not a scoring signal (§5.4, revised 2026-09-11): if a
+    student states preferred states, a school outside them must never
+    appear in the shortlist, no matter its score on every other axis.
+    Unset `preferred_states` means nationwide, no filtering. A university
+    with no recorded state is excluded when a preference is stated —
+    state is essentially always populated in this dataset (real IPEDS
+    data), so treating "we don't even know the state" as satisfying an
+    explicit hard geographic requirement would be the wrong direction to
+    err in for a stated constraint, unlike the softer §5.2(b) tolerance
+    for genuinely sparse program-level facts.
+    """
+    if not preferred_states:
+        return True
+    if not university.state:
+        return False
+    wanted = {s.upper() for s in preferred_states}
+    return university.state.upper() in wanted
+
+
+def _apply_comfortable_fit_floor(
+    scored: list[ScoredInstitution], limit: int
+) -> list[ScoredInstitution]:
+    """§5.9: guarantee at least MIN_COMFORTABLE_FIT_COUNT comfortable-fit
+    results (§5.9's definition — verified GPA comfortably clears a real
+    requirement) in the shortlist, answering FULL_HANDOFF.md §8's
+    "minimum safety count" without any admission-probability judgment.
+    `scored` must already be sorted by match_score descending.
+    """
+    top = list(scored[:limit])
+    comfortable_count = sum(1 for s in top if s.is_comfortable_fit)
+    if comfortable_count >= MIN_COMFORTABLE_FIT_COUNT:
+        return top
+
+    need = MIN_COMFORTABLE_FIT_COUNT - comfortable_count
+    top_unitids = {s.unitid for s in top}
+    # `scored` is already sorted, so this yields the next-best
+    # comfortable-fit candidates outside the naive top, best first.
+    backfill_candidates = [
+        s for s in scored if s.unitid not in top_unitids and s.is_comfortable_fit
+    ]
+    # Worst-ranked non-comfortable entries in `top` are displaced first —
+    # rank 1 is never bumped for this.
+    displaceable = sorted((s for s in top if not s.is_comfortable_fit), key=lambda s: s.match_score)
+
+    result = list(top)
+    for candidate in backfill_candidates:
+        if need <= 0 or not displaceable:
+            break
+        to_remove = displaceable.pop(0)
+        result = [s for s in result if s.unitid != to_remove.unitid]
+        result.append(
+            dataclasses.replace(
+                candidate,
+                positive_reasons=[
+                    *candidate.positive_reasons,
+                    "Included to ensure your shortlist has comfortably-verified options",
+                ],
+            )
+        )
+        need -= 1
+    return result
+
+
 def recommend(
     session: Session,
     profile: RecommendationProfile,
@@ -614,16 +708,23 @@ def recommend(
     (top_fit/good_fit/explore) and `is_primary_shortlist` marks rank 1-15
     vs. the 16-20 "alternatives" band — both independent of
     `data_confidence`, which stays a per-result honesty signal, not a
-    ranking or inclusion criterion (§10).
+    ranking or inclusion criterion (§10). A comfortable-fit floor (§5.9)
+    may swap a small number of lower-ranked, non-comfortable entries for
+    higher-confidence ones outside the naive top; every swapped-in entry
+    is tagged in its own `positive_reasons`, never a silent reorder.
     """
     universities = (
         session.execute(select(University).where(University.active.is_(True))).scalars().all()
     )
+    universities = [u for u in universities if _geography_eligible(u, profile.preferred_states)]
     eligible = [u for u in universities if _degree_level_eligible(u, profile.degree_level)]
     catalog_by_unitid = _load_catalog_by_unitid(session)
     scored = [score_university(catalog_by_unitid, u, profile) for u in eligible]
     scored.sort(key=lambda s: s.match_score, reverse=True)
-    top = scored[:limit]
+
+    final_set = _apply_comfortable_fit_floor(scored, limit)
+    final_set.sort(key=lambda s: s.match_score, reverse=True)
+
     return [
         dataclasses.replace(
             result,
@@ -631,5 +732,5 @@ def recommend(
             category=_category_for_rank(i),
             is_primary_shortlist=i <= PRIMARY_SHORTLIST_SIZE,
         )
-        for i, result in enumerate(top, start=1)
+        for i, result in enumerate(final_set, start=1)
     ]
