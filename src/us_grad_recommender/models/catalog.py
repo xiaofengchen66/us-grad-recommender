@@ -95,7 +95,39 @@ class RequirementType(str, enum.Enum):
     PREREQUISITE_COURSE = "prerequisite_course"
     RECOMMENDATION_LETTERS = "recommendation_letters"
     DOCUMENT = "document"
+    FUNDING = "funding"
     OTHER = "other"
+
+
+class CredentialStatus(str, enum.Enum):
+    """Is this an official, credit-bearing degree at all, or a
+    certificate/non-credit/executive-education offering? See
+    docs/PHASE_2_CATALOG_DESIGN.md §8/§8.1 — deliberately distinct from
+    both delivery modality and visa eligibility, which are independent
+    facts and must not be inferred from each other.
+    """
+
+    DEGREE = "degree"
+    CERTIFICATE = "certificate"
+    NON_CREDIT_CERTIFICATE = "non_credit_certificate"
+    EXECUTIVE_EDUCATION = "executive_education"
+    MICROCREDENTIAL = "microcredential"
+    UNKNOWN = "unknown"
+
+
+class VisaSupportStatus(str, enum.Enum):
+    """Can this specific offering support an F-1 student's I-20 and,
+    downstream, OPT? See docs/PHASE_2_CATALOG_DESIGN.md §8/§8.1 — modeled
+    at program level (narrowest applicable scope) with an optional
+    track-level override, never as a university-level fact.
+    """
+
+    I20_ELIGIBLE = "i20_eligible"
+    NO_I20_ONLINE_ONLY = "no_i20_online_only"
+    NO_I20_NON_DEGREE = "no_i20_non_degree"
+    I20_DEPENDS_ON_CAMPUS_OR_TRACK = "i20_depends_on_campus_or_track"
+    I20_ELIGIBILITY_UNCLEAR = "i20_eligibility_unclear"
+    NOT_APPLICABLE = "not_applicable"
 
 
 class SourceType(str, enum.Enum):
@@ -247,6 +279,17 @@ class Program(Base):
     cip_code: Mapped[Optional[str]] = mapped_column(String(20))
     program_url: Mapped[Optional[str]] = mapped_column(Text)
     stem_designated: Mapped[Optional[bool]] = mapped_column(Boolean)
+    credential_status: Mapped[CredentialStatus] = mapped_column(
+        Enum(CredentialStatus, name="credential_status"),
+        nullable=False,
+        default=CredentialStatus.UNKNOWN,
+    )
+    visa_support_status: Mapped[VisaSupportStatus] = mapped_column(
+        Enum(VisaSupportStatus, name="visa_support_status"),
+        nullable=False,
+        default=VisaSupportStatus.I20_ELIGIBILITY_UNCLEAR,
+    )
+    visa_support_status_raw_text: Mapped[Optional[str]] = mapped_column(Text)
     status: Mapped[EntityStatus] = mapped_column(
         Enum(EntityStatus, name="entity_status"), nullable=False, default=EntityStatus.UNVERIFIED
     )
@@ -332,6 +375,19 @@ class ProgramTrack(Base):
     )
     cohort_size: Mapped[Optional[int]] = mapped_column(Integer)
     international_share: Mapped[Optional[float]] = mapped_column(Numeric(4, 3))
+
+    estimated_annual_cost_usd: Mapped[Optional[float]] = mapped_column(Numeric(10, 2))
+    estimated_annual_cost_raw: Mapped[Optional[str]] = mapped_column(Text)
+
+    # Program.visa_support_status is the default; set only when this
+    # track's eligibility genuinely differs from the program-level fact
+    # (see docs/PHASE_2_CATALOG_DESIGN.md §8.1 — e.g. an online track of
+    # an otherwise I-20-eligible program). Null means "no override, use
+    # the program-level value."
+    visa_support_status_override: Mapped[Optional[VisaSupportStatus]] = mapped_column(
+        Enum(VisaSupportStatus, name="visa_support_status"), nullable=True
+    )
+    visa_support_status_override_raw_text: Mapped[Optional[str]] = mapped_column(Text)
 
     status: Mapped[EntityStatus] = mapped_column(
         Enum(EntityStatus, name="entity_status"), nullable=False, default=EntityStatus.UNVERIFIED

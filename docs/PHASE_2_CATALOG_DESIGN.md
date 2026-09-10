@@ -41,9 +41,14 @@ which fields get this treatment and why not all of them need to.
 In scope: program discovery and canonicalization, degree/track/concentration
 structure, admission-requirement text and light structuring, provenance
 infrastructure, catalog adapters, a human review queue, duplicate
-detection. Out of scope (later phases per the roadmap): funding data,
-historical admission/funding outcomes, recommendation logic, image/screenshot
-parsing.
+detection. Also in scope as of Phase 2.2C (§8.1, §14 decision 8): schema
+for per-track estimated cost, funding/assistantship notes (as an
+`admission_requirements` requirement type), and program-level
+credential/visa-eligibility status — schema only, still unpopulated until
+the pilot (Phase 2.3) runs real adapters against real sources. Out of
+scope (later phases per the roadmap): historical admission/funding
+*outcome* statistics (acceptance rates, yield), recommendation logic,
+image/screenshot parsing.
 
 ---
 
@@ -517,13 +522,16 @@ be visa-eligible just because it's associated with a "mostly online"
 university) is equally a fabrication if asserted without a program-level
 source.
 
-### 8.1 Design concepts (not schema yet)
+### 8.1 Schema (Phase 2.2C — implemented; still unpopulated)
 
-These are concepts to design around, not columns to add now — no schema
-or migration changes are part of this document:
+These are now real columns/enums, migrated in Phase 2.2C (§14 decision 8)
+— see `src/us_grad_recommender/models/catalog.py` (`CredentialStatus`,
+`VisaSupportStatus`). No adapter populates them yet; every row still
+defaults to `UNKNOWN`/`I20_ELIGIBILITY_UNCLEAR` until the pilot runs a
+real source against a real program:
 
 ```
-credential_status (design concept, not yet a column/enum):
+credential_status (Program.credential_status):
   DEGREE
   CERTIFICATE
   NON_CREDIT_CERTIFICATE
@@ -531,7 +539,8 @@ credential_status (design concept, not yet a column/enum):
   MICROCREDENTIAL
   UNKNOWN
 
-visa_support_status (design concept, not yet a column/enum):
+visa_support_status (Program.visa_support_status, with an optional
+ProgramTrack.visa_support_status_override):
   I20_ELIGIBLE
   NO_I20_ONLINE_ONLY
   NO_I20_NON_DEGREE
@@ -540,11 +549,12 @@ visa_support_status (design concept, not yet a column/enum):
   NOT_APPLICABLE
 ```
 
-When these are eventually implemented, visa eligibility must be modeled at
-the **narrowest applicable scope: program, with an optional track-level
-override** — never as a single university-level boolean, for the reason
-stated above. A university may have some visa-eligible and some
-visa-ineligible programs simultaneously; a program may even have some
+Visa eligibility is modeled at the **narrowest applicable scope: program,
+with an optional track-level override** (`ProgramTrack.
+visa_support_status_override`, null meaning "no override, use the
+program-level value") — never as a single university-level boolean, for
+the reason stated above. A university may have some visa-eligible and
+some visa-ineligible programs simultaneously; a program may even have some
 visa-eligible and some visa-ineligible tracks (e.g. an on-campus track
 that supports F-1 and an online track of the "same" program that
 doesn't — which, per §7.2, is itself one of the strongest signals that
@@ -556,7 +566,13 @@ that needs the strongest provenance discipline in this whole schema:
 **official source and last-verification date must be retained for every
 visa-related fact**, no exceptions — this is the general provenance
 principle (§0, §5) applied to the field type where getting it wrong causes
-the most real-world harm to an applicant.
+the most real-world harm to an applicant. In the Phase 2.2C schema this is
+satisfied by `Program`'s existing entity-level provenance
+(`last_seen_snapshot_id` / `verification_status` / `last_verified_at`,
+per decision 1) plus a dedicated `visa_support_status_raw_text` column —
+the one field in this schema addition that gets raw-text provenance
+beyond the entity-level default, given how much §0/§23 weigh on getting
+this specific fact right.
 
 ### 8.2 User-facing distinction (future requirement)
 
@@ -919,6 +935,22 @@ crawling exist yet as a result of this research.
    the normal path for retiring a program.** No FK change made; revisit
    `ON DELETE CASCADE` only if a real operational need for DB-level
    cascade emerges.
+8. **Cost/funding/visa schema (Phase 2.2C)**: **decided — reuse existing
+   tables/patterns, no new tables.** Estimated annual cost lives on
+   `ProgramTrack` as a normalized-value-plus-raw-text pair
+   (`estimated_annual_cost_usd`/`estimated_annual_cost_raw`), mirroring
+   the existing `min_gpa`/`min_gpa_raw` pattern (§4). Funding/assistantship
+   notes reuse `admission_requirements` as-is — a new `RequirementType.
+   FUNDING` value, no schema change, no table rename — accepting that the
+   table now holds more than admission-gating facts rather than adding a
+   second near-identical table or forcing a rename migration for a table
+   already referenced elsewhere. Credential/visa status live on `Program`
+   (§8.1), with an optional track-level visa override, per the
+   narrowest-applicable-scope rule in §8. All three keep the existing
+   entity-level provenance pattern (decision 1); visa status additionally
+   gets a dedicated raw-text column per §8's extra-rigor requirement.
+   Schema only — no adapter populates these fields yet; that's Phase 2.3
+   (pilot) scope.
 
 All resolved decisions above favor simplicity and controllability for the
 pilot over up-front generality — consistent with the explicit priority to
@@ -945,9 +977,10 @@ Explicit, not yet scheduled to a specific phase sub-step beyond "Phase
   PDF for the other 8 rather than weakening the claim.)
 - [ ] Implement the snapshot refresh/versioning workflow described in
   §5.1/§6 (insert-new-snapshot-and-repoint, never delete/modify).
-- [ ] Design (not just concept-list) the program/track-level visa
+- [x] Design (not just concept-list) the program/track-level visa
   eligibility fields from §8.1 (`credential_status`, `visa_support_status`)
-  once there's a concrete adapter/source to populate them from.
+  — done in Phase 2.2C (§14 decision 8): real columns/enums on `Program`
+  (plus a `ProgramTrack` override), not yet populated by any adapter.
 - [ ] Design the user-facing online-vs-I-20-eligibility labels from §8.2.
 - [ ] Write adapter tests specifically for the "independent online/campus
   program" case from §7.2 — both the "correctly modeled as one program,
