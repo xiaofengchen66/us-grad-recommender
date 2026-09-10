@@ -319,13 +319,25 @@ def _score_cost_fit(budget_max_usd: Optional[float], match: _ProgramMatch) -> Co
     return ComponentScore(value, verified=match.cost_verified)
 
 
-def _score_reputation_fit(carnegie_classification: Optional[int]) -> ComponentScore:
-    # IPEDS uses -2 as "not applicable / not in the Carnegie universe" (see
-    # importers/ipeds/mappings.py's CARNEGIE_BASIC_LABELS comment) — a real
-    # institution can have this on file, but it's a "no classification"
-    # signal, not a verified fact worth a score. Confirmed against the dev
-    # DB: 95 real institutions carry this exact sentinel.
+def normalize_carnegie_classification(carnegie_classification: Optional[int]) -> Optional[int]:
+    """IPEDS uses -2 as "not applicable / not in the Carnegie universe"
+    (see importers/ipeds/mappings.py's CARNEGIE_BASIC_LABELS comment) — a
+    real institution can have this on file, but it's a "no classification"
+    signal, not a real tier. Confirmed against the dev DB: 95 real
+    institutions carry this exact sentinel. Public and shared by
+    `_score_reputation_fit` and `GET /universities/map` (api/routes.py) so
+    both treat the sentinel the same way — a map that colored/legended
+    markers by the raw field would otherwise render those 95 institutions
+    as if -2 were a real Carnegie tier.
+    """
     if carnegie_classification is None or carnegie_classification < 0:
+        return None
+    return carnegie_classification
+
+
+def _score_reputation_fit(carnegie_classification: Optional[int]) -> ComponentScore:
+    carnegie_classification = normalize_carnegie_classification(carnegie_classification)
+    if carnegie_classification is None:
         return ComponentScore(_NEUTRAL_FALLBACK, verified=False)
     if carnegie_classification in _RESEARCH_INTENSIVE_CARNEGIE_CODES:
         value = 80.0
@@ -339,10 +351,14 @@ def _score_reputation_fit(carnegie_classification: Optional[int]) -> ComponentSc
 
 
 def _score_program_fit(match: _ProgramMatch) -> ComponentScore:
+    # Ordering must be CONFIRMED > PARTIAL > UNKNOWN (§5.3) — PARTIAL is
+    # real, if circumstantial, evidence the program likely exists and
+    # must score above UNKNOWN's "we have nothing on file" neutral
+    # fallback (_NEUTRAL_FALLBACK), not below it.
     if match.availability == ProgramAvailability.CONFIRMED:
         return ComponentScore(85.0, verified=True)
     if match.availability == ProgramAvailability.PARTIAL:
-        return ComponentScore(55.0, verified=False)
+        return ComponentScore(_NEUTRAL_FALLBACK + 10.0, verified=False)
     return ComponentScore(_NEUTRAL_FALLBACK, verified=False)
 
 
@@ -466,10 +482,18 @@ def _load_catalog_by_unitid(session: Session) -> dict[int, list[_CatalogRow]]:
     for r in unit_rows:
         units_by_unitid.setdefault(r.unitid, []).append(r.id)
 
+    # Explicit ORDER BY, not incidental Postgres row order: when a Program
+    # has more than one ProgramTrack (e.g. thesis vs. non-thesis with
+    # different min_gpa/cost), _match_program takes the first row it
+    # matches — without a defined order, which track "wins" would be
+    # unspecified, contradicting §5.1's "100% deterministic" requirement.
+    # v1 deliberately picks the lowest-id (first-created) track
+    # consistently rather than implementing per-track selection logic.
     program_rows = session.execute(
         select(Program, ProgramTrack, DegreeType)
         .join(DegreeType, Program.degree_type_code == DegreeType.code)
         .outerjoin(ProgramTrack, ProgramTrack.program_id == Program.id)
+        .order_by(Program.id, ProgramTrack.id)
     ).all()
     rows_by_unit_id: dict[int, list[_CatalogRow]] = {}
     for program, track, degree_type in program_rows:

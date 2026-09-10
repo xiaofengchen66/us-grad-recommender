@@ -150,6 +150,22 @@ class RecommendationProfileIn(BaseModel):
             )
         return self
 
+    @model_validator(mode="after")
+    def _check_gpa_plausible_for_scale(self) -> RecommendationProfileIn:
+        # Real bug this guards against: {"gpa": 95, "gpa_scale": "scale_4_0"}
+        # would previously pass validation and reach _score_academic_fit
+        # (which only checks gpa_scale, not gpa's actual magnitude),
+        # reproducing the same "near-perfect academic_fit" failure mode the
+        # BLOCKING gpa_scale fix was written to close in the first place.
+        # 4.3 covers the (uncommon but real) A+ = 4.3 scale.
+        if self.gpa_scale == GradingScale.SCALE_4_0 and self.gpa > 4.3:
+            raise ValueError(
+                f"gpa={self.gpa!r} is not plausible for gpa_scale='scale_4_0' "
+                "(expected roughly 0-4.3); if this GPA is on a different "
+                "scale (e.g. a 100-point system), set gpa_scale='other'"
+            )
+        return self
+
 
 class ScoredInstitutionOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)

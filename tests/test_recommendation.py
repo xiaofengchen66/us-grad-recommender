@@ -167,6 +167,33 @@ def test_partial_availability_when_unit_exists_but_no_program(db_session):
     assert result.program_id is None
 
 
+def test_partial_scores_higher_than_unknown_for_program_fit(db_session):
+    """Regression for a real BLOCKING bug: PARTIAL previously scored 55
+    while UNKNOWN's neutral fallback was 60 — the exact inverse of the
+    documented CONFIRMED > PARTIAL > UNKNOWN ordering (§5.3), meaning a
+    university with real (if circumstantial) evidence of the program
+    ranked *worse* than one with zero catalog data at all."""
+    partial_unitid, unknown_unitid = 910012, 910013
+    partial_university = make_university(partial_unitid)
+    unknown_university = make_university(unknown_unitid)
+    db_session.add_all([partial_university, unknown_university])
+    db_session.flush()
+    unit = make_academic_unit(partial_unitid, name="School of Computer Science and Engineering")
+    db_session.add(unit)
+    db_session.commit()
+
+    catalog = _load_catalog_by_unitid(db_session)
+    partial_result = score_university(catalog, partial_university, base_profile())
+    unknown_result = score_university(catalog, unknown_university, base_profile())
+
+    assert partial_result.program_availability == ProgramAvailability.PARTIAL
+    assert unknown_result.program_availability == ProgramAvailability.UNKNOWN
+    assert (
+        partial_result.component_scores["program_fit"]
+        > unknown_result.component_scores["program_fit"]
+    )
+
+
 def test_missing_optional_preference_excluded_not_zeroed(db_session):
     """The core correctness rule from the design doc §5.2: not providing
     an optional preference like budget must exclude that component from
@@ -367,6 +394,56 @@ def test_recommend_excludes_institutions_below_requested_degree_level(db_session
     unitids = {r.unitid for r in results}
     assert 930002 in unitids
     assert 930001 not in unitids
+
+
+def test_recommend_excludes_inactive_universities(db_session):
+    inactive = make_university(931001, active=False)
+    active = make_university(931002, active=True)
+    db_session.add_all([inactive, active])
+    db_session.commit()
+
+    results = recommend(db_session, base_profile())
+
+    unitids = {r.unitid for r in results}
+    assert 931002 in unitids
+    assert 931001 not in unitids
+
+
+def test_multi_track_program_scoring_is_deterministic(db_session):
+    """Regression for a real MEDIUM finding: without an explicit ORDER BY,
+    which ProgramTrack "wins" when a Program has more than one was
+    unspecified DB row order, contradicting §5.1's determinism
+    requirement. Two tracks with different min_gpa must consistently
+    resolve to the same one across repeated calls."""
+    unitid = 910014
+    university = make_university(unitid)
+    db_session.add(university)
+    db_session.flush()
+    unit = make_academic_unit(unitid)
+    degree_type = make_degree_type()
+    program = Program(
+        academic_unit=unit,
+        degree_type=degree_type,
+        raw_degree_name="M.S.",
+        canonical_name="Computer Science",
+        status=EntityStatus.ACTIVE,
+        last_verified_at=TODAY,
+    )
+    db_session.add_all([unit, degree_type, program])
+    db_session.flush()
+    track_a = ProgramTrack(
+        program=program, track_name="Thesis", min_gpa=3.0, last_verified_at=TODAY
+    )
+    track_b = ProgramTrack(
+        program=program, track_name="Non-Thesis", min_gpa=3.8, last_verified_at=TODAY
+    )
+    db_session.add_all([track_a, track_b])
+    db_session.commit()
+
+    first = score_university(_load_catalog_by_unitid(db_session), university, base_profile())
+    second = score_university(_load_catalog_by_unitid(db_session), university, base_profile())
+
+    assert first.component_scores["academic_fit"] == second.component_scores["academic_fit"]
 
 
 def test_preferred_states_is_a_hard_filter_not_a_soft_preference(db_session):

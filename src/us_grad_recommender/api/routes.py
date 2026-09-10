@@ -20,7 +20,11 @@ from us_grad_recommender.api.schemas import (
     UniversitySummary,
 )
 from us_grad_recommender.models.university import Sector, University, UniversityAlias
-from us_grad_recommender.recommendation import RecommendationProfile, recommend
+from us_grad_recommender.recommendation import (
+    RecommendationProfile,
+    normalize_carnegie_classification,
+    recommend,
+)
 
 router = APIRouter(prefix="/universities", tags=["universities"])
 recommendations_router = APIRouter(tags=["recommendations"])
@@ -119,7 +123,9 @@ def get_universities_map(db: Session = Depends(get_db)) -> MapFeatureCollection:
                     city=row.city,
                     state=row.state,
                     sector=row.sector,
-                    carnegie_classification=row.carnegie_classification,
+                    carnegie_classification=normalize_carnegie_classification(
+                        row.carnegie_classification
+                    ),
                 ),
             )
         )

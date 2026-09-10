@@ -192,6 +192,22 @@ def test_universities_map_returns_geojson(client, seeded):
     assert lat == pytest.approx(34.783368)
 
 
+def test_universities_map_normalizes_carnegie_not_applicable_sentinel(client, db_session):
+    """Regression for a real MEDIUM finding: the map endpoint passed IPEDS's
+    -2 ("not in the Carnegie universe") sentinel straight through, while
+    recommendation.py's scoring treats it as "no classification" — a
+    frontend coloring markers by the raw field would render those
+    institutions as if -2 were a real tier."""
+    not_applicable = {**ALABAMA_AM, "UNITID": "999002", "C21BASIC": "-2", "IALIAS": ""}
+    import_hd_file(db_session, [not_applicable], ipeds_year=2023, masters_only=False)
+    db_session.commit()
+
+    response = client.get("/universities/map")
+
+    feature = next(f for f in response.json()["features"] if f["properties"]["unitid"] == 999002)
+    assert feature["properties"]["carnegie_classification"] is None
+
+
 def test_universities_map_registered_before_unitid_route(client, seeded):
     # /universities/map must not be swallowed by /universities/{unitid}
     response = client.get("/universities/map")
@@ -285,6 +301,23 @@ def test_recommendations_non_4_0_gpa_scale_accepted_and_neutral(client, seeded):
     body = response.json()
     for result in body["results"]:
         assert result["component_scores"]["academic_fit"] == 60.0
+
+
+def test_recommendations_rejects_implausible_gpa_for_4_0_scale(client, seeded):
+    """Regression for a real MEDIUM finding: {"gpa": 95, "gpa_scale":
+    "scale_4_0"} previously passed validation and would have reproduced
+    the exact near-perfect-score bug the BLOCKING gpa_scale fix closed."""
+    response = client.post(
+        "/recommendations",
+        json={
+            "degree_level": "masters",
+            "program_category": "general",
+            "program_name": "Computer Science",
+            "gpa": 95,
+            "gpa_scale": "scale_4_0",
+        },
+    )
+    assert response.status_code == 422
 
 
 def test_cors_allows_post_for_recommendations(client):
