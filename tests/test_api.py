@@ -6,6 +6,7 @@ from fastapi.testclient import TestClient
 from us_grad_recommender.api.app import app
 from us_grad_recommender.api.deps import get_db
 from us_grad_recommender.importers.ipeds.hd_importer import import_hd_file
+from us_grad_recommender.models.university import University
 
 ALABAMA_AM = {
     "UNITID": "100654",
@@ -192,6 +193,23 @@ def test_universities_map_returns_geojson(client, seeded):
     assert lat == pytest.approx(34.783368)
 
 
+def test_universities_map_excludes_inactive_universities(client, db_session):
+    """get_universities_map already filters University.active.is_(True) —
+    this just closes a named TEST_GAP confirming that filter actually
+    works end to end, not only asserted implicitly by the seeded fixture
+    never including an inactive row."""
+    import_hd_file(db_session, [ALABAMA_AM], ipeds_year=2023, masters_only=False)
+    db_session.commit()
+    university = db_session.get(University, 100654)
+    university.active = False
+    db_session.commit()
+
+    response = client.get("/universities/map")
+
+    unitids = {f["properties"]["unitid"] for f in response.json()["features"]}
+    assert 100654 not in unitids
+
+
 def test_universities_map_normalizes_carnegie_not_applicable_sentinel(client, db_session):
     """Regression for a real MEDIUM finding: the map endpoint passed IPEDS's
     -2 ("not in the Carnegie universe") sentinel straight through, while
@@ -280,6 +298,25 @@ def test_recommendations_rejects_degree_level_category_mismatch(client, seeded):
             "degree_level": "masters",
             "program_category": "cs_phd",
             "program_name": "Computer Science",
+            "gpa": 3.6,
+            "gpa_scale": "scale_4_0",
+        },
+    )
+    assert response.status_code == 422
+
+
+def test_recommendations_rejects_unsupported_degree_level(client, seeded):
+    """Regression for a real MEDIUM finding: degree_level=certificate/other
+    reached _degree_level_eligible's unconditional True fallthrough with
+    zero institution-level filtering — even bachelor's-only colleges
+    would come back as "recommended." Only masters/doctoral have a real
+    filter implemented, so anything else is rejected at the API layer."""
+    response = client.post(
+        "/recommendations",
+        json={
+            "degree_level": "certificate",
+            "program_category": "general",
+            "program_name": "Data Science",
             "gpa": 3.6,
             "gpa_scale": "scale_4_0",
         },

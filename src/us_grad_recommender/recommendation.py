@@ -621,7 +621,16 @@ def _match_program(
             ProgramAvailability.UNKNOWN, None, None, False, False, None, False
         )
 
-    wanted_level = _CATEGORY_DEGREE_LEVEL.get(profile.program_category)
+    # Deep-coverage categories imply a fixed level (§9.1, already
+    # cross-checked against profile.degree_level by the API's
+    # consistency validator). GENERAL has no such implied level, but the
+    # user's own required degree_level is still the right thing to
+    # gate on — falling through to `None` here (as the original version
+    # of this line did) silently skipped the degree-level check entirely
+    # for GENERAL requests, letting a wrong-level program (e.g. a
+    # Master's "Data Science" program matching a doctoral request) come
+    # back as CONFIRMED.
+    wanted_level = _CATEGORY_DEGREE_LEVEL.get(profile.program_category, profile.degree_level)
     keywords = _CATEGORY_KEYWORDS.get(profile.program_category)
     if profile.program_category == ProgramCategory.GENERAL or keywords is None:
         keywords = (profile.program_name.lower(),) if profile.program_name else ()

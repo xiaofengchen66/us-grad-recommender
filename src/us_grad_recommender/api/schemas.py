@@ -130,7 +130,7 @@ class RecommendationProfileIn(BaseModel):
         )
     )
     priority: PriorityPreset = PriorityPreset.BALANCED
-    budget_max_usd: Optional[float] = Field(default=None, ge=0)
+    budget_max_usd: Optional[float] = Field(default=None, gt=0)
     preferred_states: Optional[List[str]] = Field(
         default=None,
         min_length=1,
@@ -147,6 +147,26 @@ class RecommendationProfileIn(BaseModel):
             raise ValueError(
                 f"program_category={self.program_category.value!r} implies "
                 f"degree_level={implied.value!r}, got {self.degree_level.value!r}"
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _check_degree_level_supported(self) -> RecommendationProfileIn:
+        # DegreeLevel has CERTIFICATE/OTHER values too, but
+        # _degree_level_eligible() (recommendation.py) only implements a
+        # real institution-level filter for MASTERS/DOCTORAL — it
+        # returns True unconditionally for the other two, meaning a
+        # request with degree_level=certificate would get zero
+        # institution-level filtering (including bachelor's-only
+        # colleges) despite going through the same /recommendations
+        # endpoint. FULL_HANDOFF.md §3 scopes Phase 1 as "Master's
+        # first" anyway — reject what Phase 3.0 doesn't actually filter
+        # correctly rather than silently accept it.
+        if self.degree_level not in (DegreeLevel.MASTERS, DegreeLevel.DOCTORAL):
+            raise ValueError(
+                f"degree_level={self.degree_level.value!r} is not yet supported — "
+                "only 'masters' and 'doctoral' have real institution-level "
+                "eligibility filtering implemented"
             )
         return self
 

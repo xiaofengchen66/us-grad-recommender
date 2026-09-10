@@ -478,6 +478,42 @@ def test_general_category_matches_free_text_program_name(db_session):
     assert result.program_id == program.id
 
 
+def test_general_category_still_checks_degree_level(db_session):
+    """Regression for a real HIGH finding: GENERAL has no entry in
+    _CATEGORY_DEGREE_LEVEL, so the degree-level guard was silently
+    skipped for it entirely — a doctoral request could match a
+    Master's-level program under the same free-text name and report
+    CONFIRMED, falsely implying a doctoral program exists."""
+    unitid = 910018
+    university = make_university(unitid)
+    db_session.add(university)
+    db_session.flush()
+    unit = make_academic_unit(unitid, name="Department of Data Science")
+    degree_type = make_degree_type(code="MS-DS", level=DegreeLevel.MASTERS)
+    program = Program(
+        academic_unit=unit,
+        degree_type=degree_type,
+        raw_degree_name="M.S.",
+        canonical_name="Data Science",
+        status=EntityStatus.ACTIVE,
+        last_verified_at=TODAY,
+    )
+    db_session.add_all([unit, degree_type, program])
+    db_session.commit()
+
+    catalog = _load_catalog_by_unitid(db_session)
+    profile = base_profile(
+        degree_level=DegreeLevel.DOCTORAL,
+        program_category=ProgramCategory.GENERAL,
+        program_name="Data Science",
+    )
+    result = score_university(catalog, university, profile)
+
+    # A Master's-level "Data Science" program must not satisfy a
+    # doctoral request just because the category is GENERAL.
+    assert result.program_availability != ProgramAvailability.CONFIRMED
+
+
 def test_recommend_is_deterministic_and_sorted(db_session):
     for i in range(5):
         db_session.add(make_university(920000 + i, canonical_name=f"Uni {i}"))
