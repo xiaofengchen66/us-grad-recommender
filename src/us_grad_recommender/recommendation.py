@@ -16,10 +16,18 @@ restated at the call sites below rather than only in the doc:
   institution with no program data on file is never presented as if a
   program were confirmed there.
 - Deterministic, no ML/LLM in the ranking path (§5.1).
+- Output is a ranked top-20 shortlist (§5.8, revised 2026-09-11), not a
+  broad percentile-tiered spread — `recommend()` returns only the top
+  `TOP_N` results; `category` (`top_fit`/`good_fit`/`explore`) and
+  `is_primary_shortlist` are assigned by rank position within that
+  set, never by a score/confidence threshold. `data_confidence` stays
+  independent of rank — a top-ranked result can still carry Low
+  confidence and must still show it as such.
 """
 
 from __future__ import annotations
 
+import dataclasses
 import enum
 from dataclasses import dataclass, field
 from typing import Optional
@@ -72,10 +80,16 @@ class DataConfidence(str, enum.Enum):
 
 
 class RecommendationCategory(str, enum.Enum):
-    STRONG_MATCH = "strong_match"
-    TARGET = "target"
-    REACH = "reach"
-    INSUFFICIENT_DATA = "insufficient_data"
+    """Rank-based, not score/confidence-threshold-based (§5.8, revised
+    2026-09-11) — assigned only by `recommend()` after sorting the full
+    eligible set, based on position within the top 20. Deliberately named
+    to read as "how well it matches what you asked for," never as
+    admission difficulty (same reasoning that ruled out
+    strong_match/target/reach in the first place)."""
+
+    TOP_FIT = "top_fit"
+    GOOD_FIT = "good_fit"
+    EXPLORE = "explore"
 
 
 class ProgramAvailability(str, enum.Enum):
@@ -161,8 +175,6 @@ _PRESET_WEIGHTS: dict[PriorityPreset, dict[str, float]] = {
     },
 }
 
-DEFAULT_RESULT_LIMIT = 50
-
 
 @dataclass(frozen=True)
 class RecommendationProfile:
@@ -190,13 +202,23 @@ class ComponentScore:
 
 @dataclass(frozen=True)
 class ScoredInstitution:
+    """`rank`, `category`, and `is_primary_shortlist` are only meaningful
+    once this has gone through `recommend()` — `score_university()` (used
+    directly by tests and by `recommend()` before sorting) sets them to
+    placeholder defaults (`rank=0`, `category=EXPLORE`,
+    `is_primary_shortlist=False`) since a single institution's rank
+    depends on the full ranked set, not on that institution alone (§5.8).
+    """
+
     unitid: int
     program_id: Optional[int]
     match_score: int
     data_confidence: DataConfidence
-    category: RecommendationCategory
     program_availability: ProgramAvailability
     component_scores: dict[str, Optional[float]]
+    rank: int = 0
+    category: RecommendationCategory = RecommendationCategory.EXPLORE
+    is_primary_shortlist: bool = False
     positive_reasons: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
     unknown_facts: list[str] = field(default_factory=list)
@@ -307,14 +329,20 @@ def _data_confidence(components: dict[str, ComponentScore]) -> DataConfidence:
     return DataConfidence.LOW
 
 
-def _category(score: float, confidence: DataConfidence) -> RecommendationCategory:
-    if confidence == DataConfidence.LOW:
-        return RecommendationCategory.INSUFFICIENT_DATA
-    if score >= 75:
-        return RecommendationCategory.STRONG_MATCH
-    if score >= 50:
-        return RecommendationCategory.TARGET
-    return RecommendationCategory.REACH
+TOP_N = 20
+PRIMARY_SHORTLIST_SIZE = 15
+_TOP_FIT_CUTOFF = 5  # rank 1-5
+_GOOD_FIT_CUTOFF = 12  # rank 6-12; rank 13-20 -> EXPLORE
+
+
+def _category_for_rank(rank: int) -> RecommendationCategory:
+    """Rank-based, not score/confidence-based (§5.8) — see
+    RecommendationCategory's docstring for why."""
+    if rank <= _TOP_FIT_CUTOFF:
+        return RecommendationCategory.TOP_FIT
+    if rank <= _GOOD_FIT_CUTOFF:
+        return RecommendationCategory.GOOD_FIT
+    return RecommendationCategory.EXPLORE
 
 
 def _build_reasons(
@@ -502,15 +530,16 @@ def score_university(
     weights = _PRESET_WEIGHTS[profile.priority]
     overall = _weighted_average(components, weights)
     confidence = _data_confidence(components)
-    category = _category(overall, confidence)
     positive, warnings, unknown = _build_reasons(profile, match, components)
 
+    # rank/category/is_primary_shortlist are placeholders here — only
+    # recommend() knows an institution's position in the full ranked set
+    # (§5.8); it fills these in via dataclasses.replace() after sorting.
     return ScoredInstitution(
         unitid=university.unitid,
         program_id=match.program_id,
         match_score=round(overall),
         data_confidence=confidence,
-        category=category,
         program_availability=match.availability,
         component_scores={name: c.value for name, c in components.items()},
         positive_reasons=positive,
@@ -540,12 +569,17 @@ def recommend(
     session: Session,
     profile: RecommendationProfile,
     *,
-    limit: int = DEFAULT_RESULT_LIMIT,
+    limit: int = TOP_N,
 ) -> list[ScoredInstitution]:
-    """Broad, exploratory output (§5.8) — not a forced top-10. Scores
-    every degree-level-eligible active university and returns the top
-    `limit` by match_score; `insufficient_data` results are included in
-    that ranking like any other category, never excluded outright (§10).
+    """A ranked top-`limit` shortlist (§5.8, revised 2026-09-11), not a
+    broad percentile spread — everything outside the top `limit` is not
+    part of the response at all (it still exists on the map as a neutral
+    background marker via GET /universities/map, unaffected by this).
+    Within the returned set, `category` is assigned by rank position
+    (top_fit/good_fit/explore) and `is_primary_shortlist` marks rank 1-15
+    vs. the 16-20 "alternatives" band — both independent of
+    `data_confidence`, which stays a per-result honesty signal, not a
+    ranking or inclusion criterion (§10).
     """
     universities = (
         session.execute(select(University).where(University.active.is_(True))).scalars().all()
@@ -554,4 +588,13 @@ def recommend(
     catalog_by_unitid = _load_catalog_by_unitid(session)
     scored = [score_university(catalog_by_unitid, u, profile) for u in eligible]
     scored.sort(key=lambda s: s.match_score, reverse=True)
-    return scored[:limit]
+    top = scored[:limit]
+    return [
+        dataclasses.replace(
+            result,
+            rank=i,
+            category=_category_for_rank(i),
+            is_primary_shortlist=i <= PRIMARY_SHORTLIST_SIZE,
+        )
+        for i, result in enumerate(top, start=1)
+    ]

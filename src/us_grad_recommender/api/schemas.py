@@ -129,11 +129,15 @@ class ScoredInstitutionOut(BaseModel):
 
     unitid: int
     program_id: Optional[int]
+    rank: int = Field(ge=1, le=20)
     match_score: int = Field(
         ge=0, le=100, description="Match/relevance score. Never an admission probability."
     )
     data_confidence: DataConfidence
     category: RecommendationCategory
+    is_primary_shortlist: bool = Field(
+        description="True for rank 1-15 (default shortlist); false for rank 16-20 (alternatives)."
+    )
     program_availability: ProgramAvailability
     component_scores: Dict[str, Optional[float]]
     positive_reasons: List[str]

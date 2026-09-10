@@ -184,7 +184,10 @@ def test_carnegie_not_applicable_sentinel_treated_as_unknown(db_session):
     assert result.component_scores["reputation_fit"] == 60.0
 
 
-def test_low_confidence_forces_insufficient_data_category(db_session):
+def test_low_confidence_result_can_still_rank_but_shows_low_confidence(db_session):
+    """§5.8 (revised): rank/category are about standing among candidates,
+    not a claim about data quality — a low-confidence result isn't forced
+    into a special category, but data_confidence must still say Low."""
     unitid = 910006
     university = make_university(unitid, carnegie_classification=None)
     db_session.add(university)
@@ -194,7 +197,55 @@ def test_low_confidence_forces_insufficient_data_category(db_session):
     result = score_university(catalog, university, base_profile())
 
     assert result.data_confidence == DataConfidence.LOW
-    assert result.category == RecommendationCategory.INSUFFICIENT_DATA
+    # score_university() alone doesn't know rank/category yet (§5.8's
+    # docstring) — those are only meaningful after recommend() sorts.
+    assert result.rank == 0
+
+
+def test_recommend_caps_at_top_20_and_assigns_rank_based_category(db_session):
+    for i in range(25):
+        db_session.add(make_university(940000 + i, canonical_name=f"Rank Uni {i}"))
+    db_session.commit()
+
+    results = recommend(db_session, base_profile())
+
+    assert len(results) == 20
+    ranks = [r.rank for r in results]
+    assert ranks == list(range(1, 21))
+    for r in results:
+        if r.rank <= 5:
+            assert r.category == RecommendationCategory.TOP_FIT
+        elif r.rank <= 12:
+            assert r.category == RecommendationCategory.GOOD_FIT
+        else:
+            assert r.category == RecommendationCategory.EXPLORE
+
+
+def test_recommend_primary_shortlist_is_top_15(db_session):
+    for i in range(25):
+        db_session.add(make_university(950000 + i, canonical_name=f"Shortlist Uni {i}"))
+    db_session.commit()
+
+    results = recommend(db_session, base_profile())
+
+    for r in results:
+        if r.rank <= 15:
+            assert r.is_primary_shortlist is True
+        else:
+            assert r.is_primary_shortlist is False
+    assert sum(1 for r in results if r.is_primary_shortlist) == 15
+    assert sum(1 for r in results if not r.is_primary_shortlist) == 5
+
+
+def test_recommend_with_fewer_than_20_eligible_returns_all(db_session):
+    for i in range(5):
+        db_session.add(make_university(960000 + i, canonical_name=f"Small Uni {i}"))
+    db_session.commit()
+
+    results = recommend(db_session, base_profile())
+
+    assert len(results) == 5
+    assert [r.rank for r in results] == [1, 2, 3, 4, 5]
 
 
 def test_general_category_matches_free_text_program_name(db_session):

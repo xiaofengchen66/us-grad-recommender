@@ -1,9 +1,11 @@
 # Map-First Recommendation System — Design Proposal (Phase 3)
 
-Status: **approved 2026-09-10.** PR #14 (`feature/recommend-wizard-mock-data`,
-the 4-step wizard + mock results page) has been **closed**, not
-reworked — it is superseded by this design. Implementation proceeds
-per the phase breakdown in §16, starting with Phase 3.0.
+Status: **approved 2026-09-10, ranking model revised 2026-09-11
+(§5.8 — top-20 shortlist replacing the original broad percentile-tier
+output).** PR #14 (`feature/recommend-wizard-mock-data`, the 4-step
+wizard + mock results page) has been **closed**, not reworked — it is
+superseded by this design. Implementation proceeds per the phase
+breakdown in §16, starting with Phase 3.0.
 
 This document is the required design-before-code artifact for the
 product pivot described in chat on 2026-09-10: from a linear
@@ -20,9 +22,13 @@ today (not assumed).
 **Changes:**
 - UI paradigm: wizard-then-results-page → persistent map + left profile
   panel + right detail drawer, all on one screen, updating live.
-- Recommendation philosophy: narrow "10 best programs" → broad
-  "20–50 plausible institutions," explicitly *not* a final shortlist —
-  the map is how the user narrows it themselves.
+- Recommendation philosophy: narrow "10 best programs" → a ranked
+  **top-20 shortlist** (primary 15 + 5 alternatives, §5.8, revised
+  2026-09-11 from an earlier broader/percentile-tiered draft) — still
+  far more exploratory than a rigid top-10, but a real shortlist
+  rather than a "here are 2,000 schools, go compare them yourself"
+  spread. The map still shows the full IPEDS baseline as neutral
+  background; only the top 20 are highlighted.
 - Score semantics: no admission-probability language anywhere. A
   `match_score` (0–100) + separate `data_confidence` (High/Medium/Low),
   never combined into a single misleading number.
@@ -342,9 +348,11 @@ bare number:
 {
   "unitid": 12345,
   "program_id": 678,
+  "rank": 6,
   "match_score": 84,
   "data_confidence": "medium",
-  "category": "target",
+  "category": "good_fit",
+  "is_primary_shortlist": true,
   "program_availability": "confirmed",
   "component_scores": {
     "academic_fit": 78,
@@ -392,19 +400,53 @@ not in API field names, not in frontend copy, not in log/debug output.
 | Admission Fit | ↑ `w_academic`, ↓ `w_reputation` — **naming note**: this weights how closely the student's academic profile matches the program's stated requirements more heavily; it does not compute or imply an admission probability (§5.0) |
 | Balanced (default) | equal weights |
 
-### 5.8 Category thresholds
+### 5.8 Top-20 shortlist, not a percentile spread (revised 2026-09-11)
 
-`category` is derived from `overall_score` **and** `data_confidence`
-together, not score alone — a school with too little verified data to
-trust the score at all should never be silently presented as a
-confident match:
+**Superseded the original score-threshold categories** (`strong_match`/
+`target`/`reach`/`insufficient_data` applied across a broad 20–50-result
+set) after review: if the product's actual promise is "a shortlist
+worth applying to," painting 2,000+ map markers into four buckets
+undercuts that promise more than it serves it — most real institutions
+land in a narrow score band anyway given how sparse verified program
+data still is (confirmed empirically against the dev DB during PR #17:
+2,018 of 2,113 landed as `target`, one bucket, with no real
+differentiation). A cleaner shortlist gives a stronger, more honest
+recommendation feel than a mostly-flat four-way split.
 
-- `strong_match`: score ≥ 75 AND confidence ≥ Medium
-- `target`: 50 ≤ score < 75 AND confidence ≥ Medium
-- `reach`: score < 50 AND confidence ≥ Medium
-- `insufficient_data`: confidence == Low, regardless of score — shown
-  distinctly (§11), never silently dropped from the map (§10's "unknown
-  != no" principle applies at the whole-recommendation level too).
+**New model:**
+1. Rank all degree-level-eligible institutions by `match_score`
+   (unchanged scoring/ranking logic from §5.1–§5.7).
+2. Return the **top 20 only** — everything beyond rank 20 is not part
+   of the recommendation response at all (it still exists on the map
+   as a neutral background marker via `GET /universities/map`, §6.3 —
+   this endpoint is untouched, still returns the full baseline
+   universe).
+3. Within that top 20, assign category **by rank position**, not by a
+   score/confidence threshold:
+   - `top_fit`: rank 1–5
+   - `good_fit`: rank 6–12
+   - `explore`: rank 13–20
+4. Separately, `is_primary_shortlist` is `true` for rank 1–15 and
+   `false` for rank 16–20 — this drives the frontend's default
+   "Recommended shortlist: 15 programs" + "+5 alternatives" framing
+   (§13), independent of the 3-tier color/label above (rank 13–15 is
+   simultaneously `explore`-tier *and* part of the primary shortlist;
+   rank 16–20 is `explore`-tier and an alternative — both facts are
+   exposed, neither is hidden).
+
+**`data_confidence` is unchanged and still shown per result** — a
+result's rank/tier position is about how it compares to other
+candidates, not a claim about how well-verified its facts are. A
+`top_fit` result can still carry Low confidence, and the frontend must
+still show that plainly (§10, §11.2) — dropping the `insufficient_data`
+*category* does not relax the underlying honesty rule, it just moves
+where that signal lives (a per-result confidence badge, not a bucket
+name that risked being misread as an admission-difficulty judgment —
+the same reasoning that ruled out `strong_match`/`target`/`reach` in
+the first place, restated more strongly this round: the new label set
+(`top_fit`/`good_fit`/`explore`) was deliberately chosen to read as
+"how well it matches what you asked for," never as "how hard it is to
+get in").
 
 ## 6. Institution/program data model changes
 
@@ -595,9 +637,12 @@ Directly reuses the existing `VerificationStatus` enum
 `REJECTED_AS_INVALID`) already on every catalog row — no new concept
 needed, just consistent surfacing in the UI:
 
-- Map/list: a school is never hidden or excluded for having
-  unverified fields (§5.8 — `insufficient_data` is a visible category,
-  not an exclusion).
+- Map/list: a school is never hidden or excluded from the baseline map
+  for having unverified fields. The top-20 shortlist (§5.8) is a
+  ranking cutoff, not a data-quality exclusion — a result can rank in
+  the top 20 with Low `data_confidence`, and the UI must still show
+  that confidence plainly rather than implying the ranking itself is
+  equally trustworthy everywhere.
 - Drawer: every fact renders with a status badge derived from its
   row's `verification_status`. Collapse the six-value enum to three
   user-facing labels for the badge (internal value kept for
@@ -616,20 +661,25 @@ needed, just consistent surfacing in the UI:
 
 | State | When | Visual treatment (exact tokens TBD in implementation, `dataviz` skill governs the actual palette) |
 |---|---|---|
-| Neutral | before recommendation, or "all schools" view | small, low-saturation neutral dot |
-| Strong match | `category == strong_match` | most prominent tier color, larger/bolder marker |
-| Target | `category == target` | second tier color |
-| Reach | `category == reach` | third tier color |
-| Insufficient data | `category == insufficient_data` | distinct neutral/outlined treatment — visibly different from both "not recommended" and "strong match," not just a dimmer version of one of the three colors |
+| Neutral (background) | any institution not in the top 20 (§5.8) — the large majority of the map at all times | small, low-saturation neutral dot, unchanged before/after "Generate Recommendations" |
+| Top Fit | `category == top_fit` (rank 1–5) | most prominent tier color, largest/boldest marker |
+| Good Fit | `category == good_fit` (rank 6–12) | second tier color |
+| Explore | `category == explore` (rank 13–20) | third tier color |
 | Hover | any | subtle elevation/halo, tooltip appears |
 | Selected | clicked, or corresponding result-list row hovered/clicked | strongest visual emphasis, drawer opens |
 
-Three semantic tiers (`strong_match`/`target`/`reach`) plus one
-explicit "don't know" state, not a rainbow palette, per the explicit
-"colors must have semantic meaning" requirement. Exact hex values are
-an implementation-time decision, to be built following this repo's
-`dataviz` skill (palette validator, light/dark handling) rather than
-picked ad hoc here.
+Every top-20 marker (regardless of tier) still carries its own
+`data_confidence` — surfaced via the tooltip/drawer, not a 4th marker
+color, per §10's point above.
+
+Three semantic tiers (`top_fit`/`good_fit`/`explore`) plus one shared
+neutral background state, not a rainbow palette, per the explicit
+"colors must have semantic meaning" requirement. Deliberately named to
+read as "how well it matches what you asked for," never as "how hard
+it is to get in" — the same concern that ruled out admission-adjacent
+naming throughout §5. Exact hex values are an implementation-time
+decision, to be built following this repo's `dataviz` skill (palette
+validator, light/dark handling) rather than picked ad hoc here.
 
 ### 11.2 "Why this school" — detail drawer content
 
@@ -675,10 +725,12 @@ already in `web/`):
 - Left panel: required profile fields (degree level, program category,
   program name, GPA, background) + the four preset priority chips
   (§5.7). Optional fields present but genuinely optional.
-- `POST /recommendations` computing the v1 deterministic score (§5) —
-  broad output (20–50), not a strict top-N.
-- 3-tier + insufficient-data color system on the map, synced with a
-  results list (§16).
+- `POST /recommendations` computing the v1 deterministic score and
+  returning the ranked top 20 (§5.8): primary shortlist (rank 1–15) +
+  alternatives (rank 16–20).
+- 3-tier rank-based color system (`top_fit`/`good_fit`/`explore`) on
+  the map, synced with a results list (§16); everything outside the
+  top 20 stays neutral background.
 - Detail drawer: why-this-school checklist, fact list with
   verification badges, and tiered official links (§9) — populated only
   where the existing schema already has data (i.e., can legitimately be
@@ -827,6 +879,8 @@ Workers.
 Standing constraints restated for implementation (not new, but worth
 keeping visible): don't optimize for data completeness before
 shipping — missing program-level facts render as "not yet verified,"
-never exclude a school (§10); recommendation output stays broad
-(20–50, exploratory), never a forced top-10 (§5.8); reuse existing
-backend/pipeline code, no rewrites of working infrastructure (§7).
+never exclude a school (§10); recommendation output is a ranked top-20
+shortlist (15 primary + 5 alternatives), not a strict top-10 and not
+an unbounded percentile spread (§5.8, revised 2026-09-11); reuse
+existing backend/pipeline code, no rewrites of working infrastructure
+(§7).
