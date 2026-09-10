@@ -98,6 +98,21 @@ class ProgramAvailability(str, enum.Enum):
     UNKNOWN = "unknown"
 
 
+class GradingScale(str, enum.Enum):
+    """FULL_HANDOFF.md §9 lists "Original GPA and grading scale" as a core
+    applicant-profile field for exactly this reason: `ProgramTrack.min_gpa`
+    is normalized to a 0-4 scale (PHASE_2_CATALOG_DESIGN.md §2.1/§4), and
+    comparing a differently-scaled GPA to it directly is only valid on a
+    0-4 scale. §0/§23 explicitly forbid inventing a linear conversion
+    (e.g. 86/100 -> 3.44/4.0) across grading systems, so anything other
+    than SCALE_4_0 must fall back neutrally in scoring (§5.2b) rather than
+    being compared — see `_score_academic_fit`.
+    """
+
+    SCALE_4_0 = "scale_4_0"
+    OTHER = "other"  # 100-point, 4.3/5.0-max, or any non-4.0 system
+
+
 # Keyword fragments used to match a category against Program.canonical_name
 # / AcademicUnit.name (case-insensitive substring). Deliberately small and
 # literal for v1 — same "narrow, evidence-shaped heuristic over a clever
@@ -125,6 +140,16 @@ _CATEGORY_DEGREE_LEVEL: dict[ProgramCategory, DegreeLevel] = {
     ProgramCategory.BSN: DegreeLevel.MASTERS,
     ProgramCategory.ABSN: DegreeLevel.MASTERS,
 }
+
+
+def expected_degree_level(category: ProgramCategory) -> Optional[DegreeLevel]:
+    """The degree level a deep-coverage category implies (e.g. CS_PHD ->
+    DOCTORAL), or None for GENERAL, which has no fixed implied level.
+    Public so RecommendationProfileIn (api/schemas.py) can validate that a
+    request's degree_level and program_category agree, instead of
+    silently accepting a mismatch like degree_level=masters with
+    program_category=cs_phd."""
+    return _CATEGORY_DEGREE_LEVEL.get(category)
 
 # Real HD.C21BASIC codes (importers/ipeds/mappings.py) grouped into a
 # research-intensity proxy — not a ranking (§8.4/§0/§23: no US News, no
@@ -189,6 +214,7 @@ class RecommendationProfile:
     program_category: ProgramCategory
     program_name: str
     gpa: float
+    gpa_scale: GradingScale
     priority: PriorityPreset = PriorityPreset.BALANCED
     budget_max_usd: Optional[float] = None
     preferred_states: Optional[tuple[str, ...]] = None
@@ -234,8 +260,17 @@ class _ProgramMatch:
     cost_verified: bool
 
 
-def _score_academic_fit(gpa: float, match: _ProgramMatch) -> ComponentScore:
+def _score_academic_fit(
+    gpa: float, gpa_scale: GradingScale, match: _ProgramMatch
+) -> ComponentScore:
     if match.min_gpa is None:
+        return ComponentScore(_NEUTRAL_FALLBACK, verified=False)
+    if gpa_scale != GradingScale.SCALE_4_0:
+        # ProgramTrack.min_gpa is normalized to a 0-4 scale; comparing a
+        # GPA reported on any other scale (100-point, 4.3-max, etc.)
+        # directly against it would require inventing a linear
+        # conversion, which FULL_HANDOFF.md §0/§9/§23 explicitly forbid.
+        # Fall back neutrally rather than guess at a conversion.
         return ComponentScore(_NEUTRAL_FALLBACK, verified=False)
     diff = gpa - float(match.min_gpa)
     if diff >= 0.3:
@@ -521,7 +556,7 @@ def score_university(
     match = _match_program(catalog_by_unitid, university.unitid, profile)
 
     components = {
-        "academic_fit": _score_academic_fit(profile.gpa, match),
+        "academic_fit": _score_academic_fit(profile.gpa, profile.gpa_scale, match),
         "cost_fit": _score_cost_fit(profile.budget_max_usd, match),
         "location_fit": _score_location_fit(profile.preferred_states, university.state),
         "reputation_fit": _score_reputation_fit(university.carnegie_classification),

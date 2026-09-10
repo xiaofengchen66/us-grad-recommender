@@ -15,6 +15,7 @@ from us_grad_recommender.models.common import VerificationStatus
 from us_grad_recommender.models.university import Sector, University
 from us_grad_recommender.recommendation import (
     DataConfidence,
+    GradingScale,
     ProgramAvailability,
     ProgramCategory,
     RecommendationCategory,
@@ -62,6 +63,7 @@ def base_profile(**overrides) -> RecommendationProfile:
         program_category=ProgramCategory.CS_MASTERS,
         program_name="Computer Science",
         gpa=3.6,
+        gpa_scale=GradingScale.SCALE_4_0,
     )
     defaults.update(overrides)
     return RecommendationProfile(**defaults)
@@ -106,6 +108,47 @@ def test_confirmed_program_scores_higher_than_unknown(db_session):
     assert unknown_result.program_availability == ProgramAvailability.UNKNOWN
     assert unknown_result.program_id is None
     assert confirmed_result.match_score > unknown_result.match_score
+
+
+def test_non_4_0_gpa_scale_falls_back_neutrally_not_naive_subtraction(db_session):
+    """Regression for a real BLOCKING bug caught by PR #17's automated
+    review: comparing a raw GPA on an unstated/non-4.0 scale directly
+    against a 0-4-normalized min_gpa (e.g. 86 - 3.0 = 83 -> "best possible
+    fit") is exactly the naive cross-scale conversion FULL_HANDOFF.md
+    §0/§9/§23 forbid. A GPA reported on any scale other than SCALE_4_0
+    must fall back to the neutral academic_fit value instead of being
+    compared."""
+    unitid = 910010
+    university = make_university(unitid)
+    db_session.add(university)
+    db_session.flush()
+    unit = make_academic_unit(unitid)
+    degree_type = make_degree_type()
+    program = Program(
+        academic_unit=unit,
+        degree_type=degree_type,
+        raw_degree_name="M.S.",
+        canonical_name="Computer Science",
+        status=EntityStatus.ACTIVE,
+        last_verified_at=TODAY,
+    )
+    track = ProgramTrack(program=program, track_name="Thesis", min_gpa=3.0, last_verified_at=TODAY)
+    db_session.add_all([unit, degree_type, program, track])
+    db_session.commit()
+    catalog = _load_catalog_by_unitid(db_session)
+
+    # A 100-point-scale GPA of 86 subtracted naively from min_gpa=3.0
+    # would previously read as "83 above the requirement" -> max score.
+    other_scale_result = score_university(
+        catalog, university, base_profile(gpa=86.0, gpa_scale=GradingScale.OTHER)
+    )
+    scale_4_0_result = score_university(
+        catalog, university, base_profile(gpa=3.6, gpa_scale=GradingScale.SCALE_4_0)
+    )
+
+    assert other_scale_result.component_scores["academic_fit"] == 60.0
+    assert scale_4_0_result.component_scores["academic_fit"] != 60.0
+    assert scale_4_0_result.component_scores["academic_fit"] == 90.0
 
 
 def test_partial_availability_when_unit_exists_but_no_program(db_session):
@@ -246,6 +289,11 @@ def test_recommend_with_fewer_than_20_eligible_returns_all(db_session):
 
     assert len(results) == 5
     assert [r.rank for r in results] == [1, 2, 3, 4, 5]
+    # A set smaller than both cutoffs (15 primary, 20 total) must still
+    # get correct per-rank category/shortlist values, not some
+    # small-set special case.
+    assert [r.category for r in results] == [RecommendationCategory.TOP_FIT] * 5
+    assert all(r.is_primary_shortlist for r in results)
 
 
 def test_general_category_matches_free_text_program_name(db_session):

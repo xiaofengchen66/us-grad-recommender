@@ -207,6 +207,7 @@ def test_recommendations_minimal_profile(client, seeded):
             "program_category": "cs_masters",
             "program_name": "Computer Science",
             "gpa": 3.6,
+            "gpa_scale": "scale_4_0",
         },
     )
     assert response.status_code == 200
@@ -227,6 +228,7 @@ def test_recommendations_with_budget_and_location(client, seeded):
             "program_category": "general",
             "program_name": "Public Administration",
             "gpa": 3.2,
+            "gpa_scale": "scale_4_0",
             "budget_max_usd": 30000,
             "preferred_states": ["TX"],
         },
@@ -243,6 +245,43 @@ def test_recommendations_rejects_missing_required_field(client, seeded):
         json={"degree_level": "masters", "program_category": "general", "gpa": 3.2},
     )
     assert response.status_code == 422
+
+
+def test_recommendations_rejects_degree_level_category_mismatch(client, seeded):
+    """Regression for a real MEDIUM finding: program_category=cs_phd
+    implies degree_level=doctoral, but nothing previously stopped a
+    request from claiming degree_level=masters at the same time."""
+    response = client.post(
+        "/recommendations",
+        json={
+            "degree_level": "masters",
+            "program_category": "cs_phd",
+            "program_name": "Computer Science",
+            "gpa": 3.6,
+            "gpa_scale": "scale_4_0",
+        },
+    )
+    assert response.status_code == 422
+
+
+def test_recommendations_non_4_0_gpa_scale_accepted_and_neutral(client, seeded):
+    """A GPA on a non-4.0 scale (e.g. 100-point) must be accepted, not
+    naively compared — see test_recommendation.py's scoring-level
+    regression test for the underlying bug this guards."""
+    response = client.post(
+        "/recommendations",
+        json={
+            "degree_level": "masters",
+            "program_category": "general",
+            "program_name": "Computer Science",
+            "gpa": 86,
+            "gpa_scale": "other",
+        },
+    )
+    assert response.status_code == 200
+    body = response.json()
+    for result in body["results"]:
+        assert result["component_scores"]["academic_fit"] == 60.0
 
 
 def test_cors_allows_post_for_recommendations(client):

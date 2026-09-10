@@ -101,11 +101,15 @@ def get_universities_map(db: Session = Depends(get_db)) -> MapFeatureCollection:
     ).scalars().all()
     features = []
     for row in rows:
-        # The WHERE clause above already excludes null coordinates; these
-        # asserts just make that guarantee visible to mypy at the point of
-        # use rather than silently widening MapFeatureGeometry's type.
-        assert row.latitude is not None
-        assert row.longitude is not None
+        # The WHERE clause above already excludes null coordinates; a
+        # runtime check (not `assert`, which is stripped under `python
+        # -O`) makes that guarantee robust in a production request path,
+        # not just visible to mypy.
+        if row.latitude is None or row.longitude is None:
+            raise RuntimeError(
+                f"University {row.unitid} matched the non-null coordinate filter "
+                "but has a null latitude/longitude — this should be unreachable."
+            )
         features.append(
             MapFeature(
                 geometry=MapFeatureGeometry(coordinates=(row.longitude, row.latitude)),
@@ -145,6 +149,7 @@ def post_recommendations(
         program_category=profile_in.program_category,
         program_name=profile_in.program_name,
         gpa=profile_in.gpa,
+        gpa_scale=profile_in.gpa_scale,
         priority=profile_in.priority,
         budget_max_usd=profile_in.budget_max_usd,
         preferred_states=(

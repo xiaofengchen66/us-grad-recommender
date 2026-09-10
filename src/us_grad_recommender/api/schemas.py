@@ -3,16 +3,18 @@ from __future__ import annotations
 from datetime import date, datetime
 from typing import Dict, List, Literal, Optional, Tuple
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from us_grad_recommender.models.catalog import DegreeLevel
 from us_grad_recommender.models.university import AliasType, CoverageTier, Sector
 from us_grad_recommender.recommendation import (
     DataConfidence,
+    GradingScale,
     PriorityPreset,
     ProgramAvailability,
     ProgramCategory,
     RecommendationCategory,
+    expected_degree_level,
 )
 
 
@@ -118,10 +120,28 @@ class RecommendationProfileIn(BaseModel):
     degree_level: DegreeLevel
     program_category: ProgramCategory
     program_name: str = Field(min_length=1, max_length=255)
-    gpa: float = Field(ge=0, le=10, description="On whatever scale the student's institution uses")
+    gpa: float = Field(ge=0, le=110, description="Raw GPA on gpa_scale's scale, not normalized")
+    gpa_scale: GradingScale = Field(
+        description=(
+            "Required alongside gpa (FULL_HANDOFF.md §9) — only SCALE_4_0 is "
+            "compared against program GPA requirements today; any other scale "
+            "falls back to a neutral, unscored academic_fit rather than an "
+            "invented cross-scale conversion (§0/§23)."
+        )
+    )
     priority: PriorityPreset = PriorityPreset.BALANCED
     budget_max_usd: Optional[float] = Field(default=None, ge=0)
     preferred_states: Optional[List[str]] = Field(default=None, min_length=1)
+
+    @model_validator(mode="after")
+    def _check_degree_level_matches_category(self) -> RecommendationProfileIn:
+        implied = expected_degree_level(self.program_category)
+        if implied is not None and implied != self.degree_level:
+            raise ValueError(
+                f"program_category={self.program_category.value!r} implies "
+                f"degree_level={implied.value!r}, got {self.degree_level.value!r}"
+            )
+        return self
 
 
 class ScoredInstitutionOut(BaseModel):
