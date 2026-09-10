@@ -36,9 +36,9 @@ today (not assumed).
   `match_score` (0–100) + separate `data_confidence` (High/Medium/Low),
   never combined into a single misleading number.
 - Program-URL depth: two tiers by field (§9) — a short list of
-  high-value fields (JD, LLM, MD, DDS/DMD, CS Master's, CS PhD, BSN,
-  ABSN) get deep, program-level official links; everything else gets
-  the school's general graduate-admissions entry point. Program *name*
+  high-value fields (JD, LLM, MD, DDS/DMD, CS Master's, CS PhD) get
+  deep, program-level official links; everything else gets the
+  school's general graduate-admissions entry point. Program *name*
   is still always collected for scoring regardless of tier (§9.2).
 - New institution-level fact under investigation: SEVP/I-20
   certification, from an actual DHS source (§8.3) — separate from, and
@@ -686,8 +686,19 @@ international-office pages, each independently provenanced):
 | DDS / DMD | dentistry |
 | CS Master's | |
 | CS PhD | |
-| BSN | nursing, first degree |
-| ABSN | accelerated BSN — the explicit "career-changer into nursing" path named in the target-user description |
+
+**BSN/ABSN deferred, not built (added 2026-09-11).** Both were
+originally scoped in (ABSN specifically to cover the "career-changer
+into nursing" segment named in the target-user description), but
+review caught them mapped to `DegreeLevel.MASTERS` — wrong, since BSN
+(and its accelerated ABSN variant) are bachelor's-level credentials,
+and the schema's `DegreeLevel` enum has no `BACHELORS` value at all.
+Adding one is a real migration (same shape as `RequirementType.FUNDING`
+in PR #16), which doesn't belong in a routine, schema-free PR under the
+current self-merge policy; shipping a known-wrong mapping instead
+isn't acceptable either. **Follow-up, not scoped to a specific PR yet:**
+add `DegreeLevel.BACHELORS` via its own migration PR, then reinstate
+`ProgramCategory.BSN`/`ABSN` in `recommendation.py`.
 
 **General / Other:** everything else. Gets the institution's graduate
 school admissions entry point, not a program-specific deep link.
@@ -852,6 +863,9 @@ v1; baseline map is the full IPEDS universe, not R1/R2-restricted.
   review flagged as OPTIONAL/non-blocking; decomposing it is real
   future work, not silently dropped.
 - Rankings as a scoring input.
+- `ProgramCategory.BSN`/`ABSN` (added 2026-09-11, see §9.1) — needs
+  `DegreeLevel.BACHELORS`, which doesn't exist yet and requires its own
+  migration PR.
 - No further baseline-universe expansion planned: confirmed the full
   IPEDS set (liberal arts colleges included, since IPEDS already
   covers them) is the v1 baseline — nothing to add here.

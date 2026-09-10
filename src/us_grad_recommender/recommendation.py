@@ -63,6 +63,17 @@ class ProgramCategory(str, enum.Enum):
     official links; GENERAL gets the institution's graduate-admissions
     entry point. Link tier is independent of scoring (§9.3) — GENERAL
     picks still score normally off the free-text program name.
+
+    BSN/ABSN (bachelor's-level nursing, incl. the accelerated
+    career-changer pathway) are deliberately NOT included here yet —
+    deferred 2026-09-11 after review caught them mapped to
+    DegreeLevel.MASTERS, which is wrong (they're bachelor's-level, and
+    DegreeLevel has no BACHELORS value at all). Adding one is a real
+    schema migration, which this routine PR isn't the place for; shipping
+    a known-wrong degree-level mapping isn't acceptable either. Tracked
+    as follow-up work: add DegreeLevel.BACHELORS via its own migration
+    PR, then reinstate BSN/ABSN here. See
+    docs/MAP_RECOMMENDER_DESIGN.md §14.
     """
 
     JD = "jd"
@@ -71,8 +82,6 @@ class ProgramCategory(str, enum.Enum):
     DDS_DMD = "dds_dmd"
     CS_MASTERS = "cs_masters"
     CS_PHD = "cs_phd"
-    BSN = "bsn"
-    ABSN = "absn"
     GENERAL = "general"
 
 
@@ -136,8 +145,6 @@ _CATEGORY_KEYWORDS: dict[ProgramCategory, tuple[str, ...]] = {
     ProgramCategory.DDS_DMD: ("d.d.s.", "d.m.d.", "doctor of dental"),
     ProgramCategory.CS_MASTERS: ("computer science",),
     ProgramCategory.CS_PHD: ("computer science",),
-    ProgramCategory.BSN: ("nursing",),
-    ProgramCategory.ABSN: ("nursing",),
 }
 
 _CATEGORY_DEGREE_LEVEL: dict[ProgramCategory, DegreeLevel] = {
@@ -147,8 +154,6 @@ _CATEGORY_DEGREE_LEVEL: dict[ProgramCategory, DegreeLevel] = {
     ProgramCategory.DDS_DMD: DegreeLevel.DOCTORAL,
     ProgramCategory.CS_MASTERS: DegreeLevel.MASTERS,
     ProgramCategory.CS_PHD: DegreeLevel.DOCTORAL,
-    ProgramCategory.BSN: DegreeLevel.MASTERS,
-    ProgramCategory.ABSN: DegreeLevel.MASTERS,
 }
 
 
