@@ -172,3 +172,85 @@ def test_cors_allows_frontend_dev_origin(client):
 def test_cors_rejects_other_origins(client):
     response = client.get("/healthz", headers={"Origin": "https://evil.example"})
     assert "access-control-allow-origin" not in response.headers
+
+
+def test_universities_map_returns_geojson(client, seeded):
+    response = client.get("/universities/map")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["type"] == "FeatureCollection"
+    # all 3 seeded institutions have real coordinates from the fixtures
+    assert len(body["features"]) == 3
+    feature = next(f for f in body["features"] if f["properties"]["unitid"] == 100654)
+    assert feature["type"] == "Feature"
+    assert feature["geometry"]["type"] == "Point"
+    # GeoJSON coordinate order is [longitude, latitude] — Alabama A&M's
+    # fixture longitude (-86.568502) is negative, latitude (34.783368) is
+    # positive, so this also catches an accidental lat/lon swap.
+    lon, lat = feature["geometry"]["coordinates"]
+    assert lon == pytest.approx(-86.568502)
+    assert lat == pytest.approx(34.783368)
+
+
+def test_universities_map_registered_before_unitid_route(client, seeded):
+    # /universities/map must not be swallowed by /universities/{unitid}
+    response = client.get("/universities/map")
+    assert response.status_code == 200
+    assert response.json()["type"] == "FeatureCollection"
+
+
+def test_recommendations_minimal_profile(client, seeded):
+    response = client.post(
+        "/recommendations",
+        json={
+            "degree_level": "masters",
+            "program_category": "cs_masters",
+            "program_name": "Computer Science",
+            "gpa": 3.6,
+        },
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert len(body["results"]) == 2  # only the 2 masters-granting seeded institutions
+    for result in body["results"]:
+        assert 0 <= result["match_score"] <= 100
+        assert "admission_probability" not in result
+        assert result["component_scores"]["cost_fit"] is None  # no budget provided
+        assert result["component_scores"]["location_fit"] is None  # no region provided
+
+
+def test_recommendations_with_budget_and_location(client, seeded):
+    response = client.post(
+        "/recommendations",
+        json={
+            "degree_level": "masters",
+            "program_category": "general",
+            "program_name": "Public Administration",
+            "gpa": 3.2,
+            "budget_max_usd": 30000,
+            "preferred_states": ["TX"],
+        },
+    )
+    assert response.status_code == 200
+    body = response.json()
+    for result in body["results"]:
+        assert result["component_scores"]["location_fit"] is not None
+
+
+def test_recommendations_rejects_missing_required_field(client, seeded):
+    response = client.post(
+        "/recommendations",
+        json={"degree_level": "masters", "program_category": "general", "gpa": 3.2},
+    )
+    assert response.status_code == 422
+
+
+def test_cors_allows_post_for_recommendations(client):
+    response = client.options(
+        "/recommendations",
+        headers={
+            "Origin": "http://localhost:3000",
+            "Access-Control-Request-Method": "POST",
+        },
+    )
+    assert response.headers["access-control-allow-origin"] == "http://localhost:3000"
