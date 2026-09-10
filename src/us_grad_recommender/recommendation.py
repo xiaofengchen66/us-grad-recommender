@@ -52,7 +52,7 @@ from us_grad_recommender.models.catalog import (
     Program,
     ProgramTrack,
 )
-from us_grad_recommender.models.common import VerificationStatus
+from us_grad_recommender.models.common import EntityStatus, VerificationStatus
 from us_grad_recommender.models.university import University
 
 # --- Enums (request/response vocabulary; not persisted) -----------------
@@ -176,12 +176,30 @@ _MASTERS_FOCUSED_CARNEGIE_CODES = frozenset({18, 19, 20})
 _BACCALAUREATE_CARNEGIE_CODES = frozenset({21, 22, 23})
 
 _NEUTRAL_FALLBACK = 60.0
+# Used for data_confidence bucketing (§5.6) and ComponentScore.verified
+# generally — matches PHASE_2_CATALOG_DESIGN.md §10's own "Reported, not
+# yet verified" vs "Verified" split... except §10 actually buckets PARSED
+# under "Reported, not yet verified", not "Verified". This constant is
+# intentionally the *looser* of the two sets used in this module: fine for
+# confidence (a mix of parsed-but-unreviewed and fully-verified facts
+# still means "we have real data," just not maximal confidence), but NOT
+# fine as the bar for §5.9's comfortable-fit floor — see
+# _STRICT_VERIFIED_STATUSES below for why those two are kept separate.
 _VERIFIED_STATUSES = frozenset(
     {
         VerificationStatus.USER_CONFIRMED,
         VerificationStatus.DOCUMENT_VERIFIED,
         VerificationStatus.PARSED,
     }
+)
+# Stricter set, for §5.9's comfortable-fit floor only: PHASE_2_CATALOG_DESIGN.md
+# §10 explicitly excludes PARSED from "Verified" ("no auto-promotion
+# allowlist... every automated extraction... goes through data_review_tasks
+# before it can reach user_confirmed/document_verified"). An
+# adapter-extracted, human-unreviewed min_gpa is exactly the kind of fact
+# that rule exists to keep out of a "comfortably-verified" safety claim.
+_STRICT_VERIFIED_STATUSES = frozenset(
+    {VerificationStatus.USER_CONFIRMED, VerificationStatus.DOCUMENT_VERIFIED}
 )
 
 _PRESET_WEIGHTS: dict[PriorityPreset, dict[str, float]] = {
@@ -281,6 +299,7 @@ class _ProgramMatch:
     program_id: Optional[int]
     min_gpa: Optional[float]
     min_gpa_verified: bool
+    min_gpa_strictly_verified: bool
     estimated_annual_cost_usd: Optional[float]
     cost_verified: bool
 
@@ -467,6 +486,7 @@ class _CatalogRow:
     degree_level: DegreeLevel
     min_gpa: Optional[float]
     min_gpa_verified: bool
+    min_gpa_strictly_verified: bool  # §5.9's comfortable-fit floor bar
     estimated_annual_cost_usd: Optional[float]
     cost_verified: bool
 
@@ -494,10 +514,32 @@ def _load_catalog_by_unitid(session: Session) -> dict[int, list[_CatalogRow]]:
     # unspecified, contradicting §5.1's "100% deterministic" requirement.
     # v1 deliberately picks the lowest-id (first-created) track
     # consistently rather than implementing per-track selection logic.
+    #
+    # Excludes only DISCONTINUED/PAUSED, not "not yet ACTIVE": a
+    # DISCONTINUED or PAUSED program (PHASE_2_CATALOG_DESIGN.md §6/§12 —
+    # the real lifecycle state for a program that repeatedly 404s on
+    # re-crawl) must never be recommended as CONFIRMED. UNVERIFIED is
+    # deliberately still included — per EntityStatus's own docstring
+    # (models/common.py) it means "we haven't checked whether this still
+    # exists," not "known gone," and it's the realistic default status
+    # for most real (and fixture) rows today, matching the established
+    # convention elsewhere in this codebase (e.g. test_catalog_models.py's
+    # own base_chain fixture leaves tracks at their UNVERIFIED default
+    # and asserts that's correct). Requiring exactly ACTIVE would have
+    # silently excluded nearly everything. ProgramTrack gets the same
+    # exclusion in the join's ON clause, not WHERE, so a Program with
+    # only excluded tracks still comes through (as if it had no track
+    # data at all, falling back neutrally) rather than disappearing.
+    _EXCLUDED_ENTITY_STATUSES = (EntityStatus.DISCONTINUED, EntityStatus.PAUSED)
     program_rows = session.execute(
         select(Program, ProgramTrack, DegreeType)
         .join(DegreeType, Program.degree_type_code == DegreeType.code)
-        .outerjoin(ProgramTrack, ProgramTrack.program_id == Program.id)
+        .outerjoin(
+            ProgramTrack,
+            (ProgramTrack.program_id == Program.id)
+            & (ProgramTrack.status.not_in(_EXCLUDED_ENTITY_STATUSES)),
+        )
+        .where(Program.status.not_in(_EXCLUDED_ENTITY_STATUSES))
         .order_by(Program.id, ProgramTrack.id)
     ).all()
     rows_by_unit_id: dict[int, list[_CatalogRow]] = {}
@@ -515,6 +557,8 @@ def _load_catalog_by_unitid(session: Session) -> dict[int, list[_CatalogRow]]:
                 ),
                 min_gpa_verified=track is not None
                 and track.verification_status in _VERIFIED_STATUSES,
+                min_gpa_strictly_verified=track is not None
+                and track.verification_status in _STRICT_VERIFIED_STATUSES,
                 estimated_annual_cost_usd=float(track.estimated_annual_cost_usd)
                 if track is not None and track.estimated_annual_cost_usd is not None
                 else None,
@@ -539,6 +583,7 @@ def _load_catalog_by_unitid(session: Session) -> dict[int, list[_CatalogRow]]:
                     degree_level=DegreeLevel.OTHER,
                     min_gpa=None,
                     min_gpa_verified=False,
+                    min_gpa_strictly_verified=False,
                     estimated_annual_cost_usd=None,
                     cost_verified=False,
                 )
@@ -560,7 +605,9 @@ def _match_program(
     """
     rows = catalog_by_unitid.get(unitid)
     if not rows:
-        return _ProgramMatch(ProgramAvailability.UNKNOWN, None, None, False, None, False)
+        return _ProgramMatch(
+            ProgramAvailability.UNKNOWN, None, None, False, False, None, False
+        )
 
     wanted_level = _CATEGORY_DEGREE_LEVEL.get(profile.program_category)
     keywords = _CATEGORY_KEYWORDS.get(profile.program_category)
@@ -580,6 +627,7 @@ def _match_program(
             program_id=row.program_id,
             min_gpa=row.min_gpa,
             min_gpa_verified=row.min_gpa_verified,
+            min_gpa_strictly_verified=row.min_gpa_strictly_verified,
             estimated_annual_cost_usd=row.estimated_annual_cost_usd,
             cost_verified=row.cost_verified,
         )
@@ -590,8 +638,10 @@ def _match_program(
     # substance even though a unit row exists.
     related = any(any(kw in row.unit_name.lower() for kw in keywords if kw) for row in rows)
     if related:
-        return _ProgramMatch(ProgramAvailability.PARTIAL, None, None, False, None, False)
-    return _ProgramMatch(ProgramAvailability.UNKNOWN, None, None, False, None, False)
+        return _ProgramMatch(
+            ProgramAvailability.PARTIAL, None, None, False, False, None, False
+        )
+    return _ProgramMatch(ProgramAvailability.UNKNOWN, None, None, False, False, None, False)
 
 
 def score_university(
@@ -615,12 +665,18 @@ def score_university(
     # "Comfortable fit" (§5.9): GPA comfortably clears a *verified*
     # requirement — not an admission-probability judgment, just whether
     # the academic_fit component landed in its highest bucket on real,
-    # sourced data rather than a neutral fallback guess.
+    # sourced data rather than a neutral fallback guess. Deliberately
+    # uses match.min_gpa_strictly_verified (USER_CONFIRMED/
+    # DOCUMENT_VERIFIED only), not the looser ComponentScore.verified
+    # used for data_confidence elsewhere — PHASE_2_CATALOG_DESIGN.md §10
+    # excludes PARSED (human-unreviewed) from "Verified," and an
+    # unreviewed extraction shouldn't be sufficient basis for the
+    # "comfortably-verified" safety claim this floor exists to make.
     academic = components["academic_fit"]
     is_comfortable_fit = (
         academic.value is not None
         and academic.value >= _COMFORTABLE_FIT_ACADEMIC_THRESHOLD
-        and academic.verified
+        and match.min_gpa_strictly_verified
     )
 
     # rank/category/is_primary_shortlist are placeholders here — only

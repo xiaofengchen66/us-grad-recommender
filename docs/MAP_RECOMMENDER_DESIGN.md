@@ -501,9 +501,20 @@ probability language.
 **Definition — "comfortable fit," not "safety":** an institution/program
 is comfortable-fit if and only if its `academic_fit` component is
 `>= 75` (the highest defined bucket — GPA is 0.3+ above the stated
-minimum) **and** that comparison rests on a verified
-`ProgramTrack.min_gpa` (not a §5.2(b) neutral fallback). This is a
-statement about "your GPA comfortably clears a real, sourced
+minimum) **and** that comparison rests on a *strictly* verified
+`ProgramTrack.min_gpa`. "Strictly" matters here and is worth being
+explicit about, since §5.6 uses "verified" more loosely elsewhere in
+this same document: the floor requires `VerificationStatus` in
+`{USER_CONFIRMED, DOCUMENT_VERIFIED}` only — **not** `PARSED`, even
+though `PARSED` is loose enough to count toward the general
+`data_confidence` bucketing in §5.6. `PHASE_2_CATALOG_DESIGN.md` §10 is
+explicit that `PARSED` means an automated, human-*unreviewed*
+extraction ("no auto-promotion allowlist... every automated
+extraction... goes through `data_review_tasks` before it can reach
+`user_confirmed`/`document_verified`") — not a strong enough basis for
+a "comfortably-verified" *safety* claim specifically, even though it's
+fine as one signal among several for a general confidence bucket. This
+is a statement about "your GPA comfortably clears a real, reviewed
 requirement" — it says nothing about competition, applicant volume, or
 actual admission odds, and is exposed as its own field
 (`is_comfortable_fit: bool`), never folded silently into `match_score`.

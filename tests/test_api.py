@@ -234,6 +234,10 @@ def test_recommendations_minimal_profile(client, seeded):
         assert "admission_probability" not in result
         assert "location_fit" not in result["component_scores"]  # hard filter, not a score
         assert result["component_scores"]["cost_fit"] is None  # no budget provided
+        # Regression for a real BLOCKING bug: ScoredInstitutionOut didn't
+        # declare is_comfortable_fit, so the field was silently dropped
+        # from the API response despite existing on the internal dataclass.
+        assert "is_comfortable_fit" in result
 
 
 def test_recommendations_preferred_states_hard_filters_out_other_states(client, seeded):

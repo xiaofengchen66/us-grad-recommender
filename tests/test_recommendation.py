@@ -110,6 +110,74 @@ def test_confirmed_program_scores_higher_than_unknown(db_session):
     assert confirmed_result.match_score > unknown_result.match_score
 
 
+def test_discontinued_program_never_matches_as_confirmed(db_session):
+    """Regression for a real HIGH finding: a DISCONTINUED (or PAUSED)
+    program — the real lifecycle state PHASE_2_CATALOG_DESIGN.md §6/§12
+    describes for a program that repeatedly 404s on re-crawl — must never
+    be recommended as CONFIRMED. UNVERIFIED (the realistic default for
+    most real data) is deliberately NOT excluded by the same fix — only
+    genuinely known-gone states are."""
+    unitid = 910015
+    university = make_university(unitid)
+    db_session.add(university)
+    db_session.flush()
+    unit = make_academic_unit(unitid)
+    degree_type = make_degree_type()
+    program = Program(
+        academic_unit=unit,
+        degree_type=degree_type,
+        raw_degree_name="M.S.",
+        canonical_name="Computer Science",
+        status=EntityStatus.DISCONTINUED,
+        last_verified_at=TODAY,
+    )
+    db_session.add_all([unit, degree_type, program])
+    db_session.commit()
+
+    catalog = _load_catalog_by_unitid(db_session)
+    result = score_university(catalog, university, base_profile())
+
+    assert result.program_availability != ProgramAvailability.CONFIRMED
+    assert "confirmed" not in " ".join(result.positive_reasons).lower()
+
+
+def test_parsed_verification_does_not_count_as_comfortable_fit(db_session):
+    """Regression for a real MEDIUM finding: PHASE_2_CATALOG_DESIGN.md §10
+    excludes PARSED (human-unreviewed) from "Verified" — an
+    adapter-extracted, unreviewed min_gpa must not be sufficient basis for
+    §5.9's comfortable-fit safety claim, even though PARSED is loose
+    enough to still count toward the broader data_confidence bucket."""
+    unitid = 910016
+    university = make_university(unitid)
+    db_session.add(university)
+    db_session.flush()
+    unit = make_academic_unit(unitid)
+    degree_type = make_degree_type()
+    program = Program(
+        academic_unit=unit,
+        degree_type=degree_type,
+        raw_degree_name="M.S.",
+        canonical_name="Computer Science",
+        status=EntityStatus.ACTIVE,
+        last_verified_at=TODAY,
+    )
+    track = ProgramTrack(
+        program=program,
+        track_name="Thesis",
+        min_gpa=2.5,  # would otherwise comfortably clear gpa=3.6
+        verification_status=VerificationStatus.PARSED,
+        last_verified_at=TODAY,
+    )
+    db_session.add_all([unit, degree_type, program, track])
+    db_session.commit()
+
+    catalog = _load_catalog_by_unitid(db_session)
+    result = score_university(catalog, university, base_profile())
+
+    assert result.component_scores["academic_fit"] == 90.0  # PARSED still scores it
+    assert result.is_comfortable_fit is False  # but doesn't count as comfortable-fit
+
+
 def test_non_4_0_gpa_scale_falls_back_neutrally_not_naive_subtraction(db_session):
     """Regression for a real BLOCKING bug caught by PR #17's automated
     review: comparing a raw GPA on an unstated/non-4.0 scale directly

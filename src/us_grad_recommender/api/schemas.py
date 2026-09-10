@@ -181,6 +181,9 @@ class ScoredInstitutionOut(BaseModel):
     is_primary_shortlist: bool = Field(
         description="True for rank 1-15 (default shortlist); false for rank 16-20 (alternatives)."
     )
+    is_comfortable_fit: bool = Field(
+        description="§5.9: GPA comfortably clears a verified program requirement."
+    )
     program_availability: ProgramAvailability
     component_scores: Dict[str, Optional[float]]
     positive_reasons: List[str]
