@@ -39,6 +39,7 @@ from __future__ import annotations
 
 import dataclasses
 import enum
+import re
 from dataclasses import dataclass, field
 from typing import Optional
 
@@ -133,19 +134,45 @@ class GradingScale(str, enum.Enum):
 
 
 # Keyword fragments used to match a category against Program.canonical_name
-# / AcademicUnit.name (case-insensitive substring). Deliberately small and
-# literal for v1 — same "narrow, evidence-shaped heuristic over a clever
-# general one" approach already used for _DEGREE_TYPE_TABLE in
-# parser_pipeline.py. Revisit with real pilot-school evidence, not
-# hypothetical categories, per that module's own documented lesson.
+# / AcademicUnit.name — word-boundary-aware (_keyword_matches below), not a
+# raw substring, so a short keyword like "llm" can't false-positive-match
+# as a fragment of an unrelated word. No manual space-padding needed for
+# that reason (an earlier revision padded entries like " md " as an ad hoc
+# boundary hack; _keyword_matches makes that unnecessary and it's been
+# removed). Deliberately small and literal for v1 — same "narrow,
+# evidence-shaped heuristic over a clever general one" approach already
+# used for _DEGREE_TYPE_TABLE in parser_pipeline.py. Revisit with real
+# pilot-school evidence, not hypothetical categories, per that module's
+# own documented lesson.
 _CATEGORY_KEYWORDS: dict[ProgramCategory, tuple[str, ...]] = {
-    ProgramCategory.JD: ("juris doctor", "j.d.", " jd"),
+    ProgramCategory.JD: ("juris doctor", "j.d.", "jd"),
     ProgramCategory.LLM: ("llm", "master of laws", "l.l.m."),
-    ProgramCategory.MD: ("doctor of medicine", "m.d.", " md "),
+    ProgramCategory.MD: ("doctor of medicine", "m.d."),
     ProgramCategory.DDS_DMD: ("d.d.s.", "d.m.d.", "doctor of dental"),
     ProgramCategory.CS_MASTERS: ("computer science",),
     ProgramCategory.CS_PHD: ("computer science",),
 }
+
+
+def _keyword_matches(name: str, keyword: str) -> bool:
+    """Word-boundary-aware match, not a raw substring (§9.1's GENERAL
+    path in particular): a short or common free-text query like "AI" or
+    "MS" must not accidentally match as a fragment of an unrelated word
+    (e.g. "ms" inside "systems") and get reported as a false CONFIRMED
+    program match. `\\b` only applies on a side that starts/ends with an
+    alphanumeric character — a keyword like "j.d." (ending in punctuation)
+    is already distinctive enough on that side without it, and `\\b`
+    immediately after a non-word character like "." would never match
+    (there's no word/non-word transition there), which would otherwise
+    silently break matching for every punctuated keyword.
+    """
+    keyword = keyword.strip().lower()
+    if not keyword:
+        return False
+    left = r"\b" if keyword[0].isalnum() else ""
+    right = r"\b" if keyword[-1].isalnum() else ""
+    pattern = left + re.escape(keyword) + right
+    return re.search(pattern, name) is not None
 
 _CATEGORY_DEGREE_LEVEL: dict[ProgramCategory, DegreeLevel] = {
     ProgramCategory.JD: DegreeLevel.DOCTORAL,
@@ -434,7 +461,13 @@ _GOOD_FIT_CUTOFF = 12  # rank 6-12; rank 13-20 -> EXPLORE
 # probability): reuses §8's own Balanced-portfolio safety count (3) rather
 # than a new number.
 MIN_COMFORTABLE_FIT_COUNT = 3
-_COMFORTABLE_FIT_ACADEMIC_THRESHOLD = 75.0
+# Must equal _score_academic_fit's actual highest bucket value (90.0),
+# not just some passing threshold — 75.0 was a real bug: it also let the
+# diff >= 0.0 bucket ("GPA barely meets the minimum, by as little as
+# 0.01") count as "comfortable fit," directly contradicting the
+# documented "0.3+ margin" definition (MAP_RECOMMENDER_DESIGN.md §5.9)
+# and overstating the floor's own safety guarantee.
+_COMFORTABLE_FIT_ACADEMIC_THRESHOLD = 90.0
 
 
 def _category_for_rank(rank: int) -> RecommendationCategory:
@@ -639,7 +672,7 @@ def _match_program(
         if row.program_id == -1:
             continue  # placeholder for "unit exists, no programs at all"
         name = row.program_canonical_name.lower()
-        if not any(kw in name for kw in keywords if kw):
+        if not any(_keyword_matches(name, kw) for kw in keywords if kw):
             continue
         if wanted_level is not None and row.degree_level != wanted_level:
             continue
@@ -657,7 +690,9 @@ def _match_program(
     # presence (at least one AcademicUnit on file) — a plausibly-related
     # department name is enough for PARTIAL, otherwise it's UNKNOWN in
     # substance even though a unit row exists.
-    related = any(any(kw in row.unit_name.lower() for kw in keywords if kw) for row in rows)
+    related = any(
+        any(_keyword_matches(row.unit_name.lower(), kw) for kw in keywords if kw) for row in rows
+    )
     if related:
         return _ProgramMatch(
             ProgramAvailability.PARTIAL, None, None, False, False, None, False

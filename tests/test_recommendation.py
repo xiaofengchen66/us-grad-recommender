@@ -478,6 +478,35 @@ def test_general_category_matches_free_text_program_name(db_session):
     assert result.program_id == program.id
 
 
+def test_general_category_free_text_does_not_substring_collide(db_session):
+    """Regression for a real MEDIUM finding: a short, generic free-text
+    query like "MS" must not false-positive-match as a bare substring of
+    an unrelated program name (e.g. "ms" inside "Information Systems")
+    and get reported as a hallucinated CONFIRMED match."""
+    unitid = 910020
+    university = make_university(unitid)
+    db_session.add(university)
+    db_session.flush()
+    unit = make_academic_unit(unitid, name="Department of Information Systems")
+    degree_type = make_degree_type(code="MIS", level=DegreeLevel.MASTERS)
+    program = Program(
+        academic_unit=unit,
+        degree_type=degree_type,
+        raw_degree_name="M.S.",
+        canonical_name="Information Systems",
+        status=EntityStatus.ACTIVE,
+        last_verified_at=TODAY,
+    )
+    db_session.add_all([unit, degree_type, program])
+    db_session.commit()
+
+    catalog = _load_catalog_by_unitid(db_session)
+    profile = base_profile(program_category=ProgramCategory.GENERAL, program_name="MS")
+    result = score_university(catalog, university, profile)
+
+    assert result.program_availability != ProgramAvailability.CONFIRMED
+
+
 def test_general_category_still_checks_degree_level(db_session):
     """Regression for a real HIGH finding: GENERAL has no entry in
     _CATEGORY_DEGREE_LEVEL, so the degree-level guard was silently
@@ -768,6 +797,43 @@ def test_comfortable_fit_floor_no_op_when_already_satisfied(db_session):
     assert all(
         "comfortably-verified" not in " ".join(r.positive_reasons) for r in results
     )
+
+
+def test_comfortable_fit_requires_full_margin_not_just_meeting_minimum(db_session):
+    """Regression for a real HIGH finding: _COMFORTABLE_FIT_ACADEMIC_THRESHOLD
+    was 75.0, which also accepted the diff >= 0.0 bucket (GPA barely
+    meeting the minimum, by as little as 0.01) — not just the documented
+    "0.3+ margin" highest bucket (90.0). A GPA that only ties the
+    requirement must not be tagged is_comfortable_fit."""
+    unitid = 910019
+    university = make_university(unitid)
+    db_session.add(university)
+    db_session.flush()
+    unit = make_academic_unit(unitid)
+    degree_type = make_degree_type()
+    program = Program(
+        academic_unit=unit,
+        degree_type=degree_type,
+        raw_degree_name="M.S.",
+        canonical_name="Computer Science",
+        status=EntityStatus.ACTIVE,
+        last_verified_at=TODAY,
+    )
+    track = ProgramTrack(
+        program=program,
+        track_name="Thesis",
+        min_gpa=3.6,  # exactly equal to the profile's gpa -> diff == 0.0
+        verification_status=VerificationStatus.DOCUMENT_VERIFIED,
+        last_verified_at=TODAY,
+    )
+    db_session.add_all([unit, degree_type, program, track])
+    db_session.commit()
+
+    catalog = _load_catalog_by_unitid(db_session)
+    result = score_university(catalog, university, base_profile())
+
+    assert result.component_scores["academic_fit"] == 75.0  # still scores it
+    assert result.is_comfortable_fit is False  # but doesn't count as comfortable-fit
 
 
 def test_match_score_never_framed_as_probability(db_session):

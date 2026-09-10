@@ -186,6 +186,24 @@ class RecommendationProfileIn(BaseModel):
             )
         return self
 
+    @model_validator(mode="after")
+    def _check_preferred_states_format(self) -> RecommendationProfileIn:
+        # preferred_states is a hard filter (§5.4) — a malformed entry
+        # (e.g. "Texas" instead of "TX") previously passed validation,
+        # silently matched nothing in _geography_eligible, and came back
+        # as a 200 with zero results — indistinguishable from "no
+        # matches in that state." Reject it explicitly instead. Matches
+        # the existing /universities search endpoint's own state query
+        # param convention (routes.py: min_length=2, max_length=2).
+        if self.preferred_states is not None:
+            for state in self.preferred_states:
+                if len(state) != 2 or not state.isalpha():
+                    raise ValueError(
+                        f"preferred_states entries must be 2-letter state codes "
+                        f"(e.g. 'TX'), got {state!r}"
+                    )
+        return self
+
 
 class ScoredInstitutionOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)

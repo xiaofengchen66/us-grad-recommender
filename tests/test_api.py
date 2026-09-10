@@ -324,6 +324,26 @@ def test_recommendations_rejects_unsupported_degree_level(client, seeded):
     assert response.status_code == 422
 
 
+def test_recommendations_rejects_malformed_preferred_state(client, seeded):
+    """Regression for a real MEDIUM finding: a malformed entry (e.g. a
+    full state name instead of a 2-letter code) previously passed
+    validation, silently matched nothing in the hard geography filter,
+    and came back as a 200 with zero results — indistinguishable from
+    "no matches in that state." Reject it explicitly instead."""
+    response = client.post(
+        "/recommendations",
+        json={
+            "degree_level": "masters",
+            "program_category": "general",
+            "program_name": "Computer Science",
+            "gpa": 3.6,
+            "gpa_scale": "scale_4_0",
+            "preferred_states": ["Texas"],
+        },
+    )
+    assert response.status_code == 422
+
+
 def test_recommendations_non_4_0_gpa_scale_accepted_and_neutral(client, seeded):
     """A GPA on a non-4.0 scale (e.g. 100-point) must be accepted, not
     naively compared — see test_recommendation.py's scoring-level
