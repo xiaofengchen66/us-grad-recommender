@@ -506,8 +506,12 @@ probability language.
 
 **Definition — "comfortable fit," not "safety":** an institution/program
 is comfortable-fit if and only if its `academic_fit` component is
-`>= 75` (the highest defined bucket — GPA is 0.3+ above the stated
-minimum) **and** that comparison rests on a *strictly* verified
+`>= 90` (the highest defined bucket — GPA is 0.3+ above the stated
+minimum; corrected 2026-09-11 from an earlier, buggy `>= 75`, which
+was actually the `diff >= 0.0` "barely meets the minimum" bucket, not
+the highest one — see `_COMFORTABLE_FIT_ACADEMIC_THRESHOLD` in
+`recommendation.py`) **and** that comparison rests on a *strictly*
+verified
 `ProgramTrack.min_gpa`. "Strictly" matters here and is worth being
 explicit about, since §5.6 uses "verified" more loosely elsewhere in
 this same document: the floor requires `VerificationStatus` in
