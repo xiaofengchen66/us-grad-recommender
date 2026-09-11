@@ -6,6 +6,7 @@ from fastapi.testclient import TestClient
 from us_grad_recommender.api.app import app
 from us_grad_recommender.api.deps import get_db
 from us_grad_recommender.importers.ipeds.hd_importer import import_hd_file
+from us_grad_recommender.models.university import University
 
 ALABAMA_AM = {
     "UNITID": "100654",
@@ -172,3 +173,220 @@ def test_cors_allows_frontend_dev_origin(client):
 def test_cors_rejects_other_origins(client):
     response = client.get("/healthz", headers={"Origin": "https://evil.example"})
     assert "access-control-allow-origin" not in response.headers
+
+
+def test_universities_map_returns_geojson(client, seeded):
+    response = client.get("/universities/map")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["type"] == "FeatureCollection"
+    # all 3 seeded institutions have real coordinates from the fixtures
+    assert len(body["features"]) == 3
+    feature = next(f for f in body["features"] if f["properties"]["unitid"] == 100654)
+    assert feature["type"] == "Feature"
+    assert feature["geometry"]["type"] == "Point"
+    # GeoJSON coordinate order is [longitude, latitude] — Alabama A&M's
+    # fixture longitude (-86.568502) is negative, latitude (34.783368) is
+    # positive, so this also catches an accidental lat/lon swap.
+    lon, lat = feature["geometry"]["coordinates"]
+    assert lon == pytest.approx(-86.568502)
+    assert lat == pytest.approx(34.783368)
+
+
+def test_universities_map_excludes_inactive_universities(client, db_session):
+    """get_universities_map already filters University.active.is_(True) —
+    this just closes a named TEST_GAP confirming that filter actually
+    works end to end, not only asserted implicitly by the seeded fixture
+    never including an inactive row."""
+    import_hd_file(db_session, [ALABAMA_AM], ipeds_year=2023, masters_only=False)
+    db_session.commit()
+    university = db_session.get(University, 100654)
+    university.active = False
+    db_session.commit()
+
+    response = client.get("/universities/map")
+
+    unitids = {f["properties"]["unitid"] for f in response.json()["features"]}
+    assert 100654 not in unitids
+
+
+def test_universities_map_normalizes_carnegie_not_applicable_sentinel(client, db_session):
+    """Regression for a real MEDIUM finding: the map endpoint passed IPEDS's
+    -2 ("not in the Carnegie universe") sentinel straight through, while
+    recommendation.py's scoring treats it as "no classification" — a
+    frontend coloring markers by the raw field would render those
+    institutions as if -2 were a real tier."""
+    not_applicable = {**ALABAMA_AM, "UNITID": "999002", "C21BASIC": "-2", "IALIAS": ""}
+    import_hd_file(db_session, [not_applicable], ipeds_year=2023, masters_only=False)
+    db_session.commit()
+
+    response = client.get("/universities/map")
+
+    feature = next(f for f in response.json()["features"] if f["properties"]["unitid"] == 999002)
+    assert feature["properties"]["carnegie_classification"] is None
+
+
+def test_universities_map_registered_before_unitid_route(client, seeded):
+    # /universities/map must not be swallowed by /universities/{unitid}
+    response = client.get("/universities/map")
+    assert response.status_code == 200
+    assert response.json()["type"] == "FeatureCollection"
+
+
+def test_recommendations_minimal_profile(client, seeded):
+    response = client.post(
+        "/recommendations",
+        json={
+            "degree_level": "masters",
+            "program_category": "cs_masters",
+            "program_name": "Computer Science",
+            "gpa": 3.6,
+            "gpa_scale": "scale_4_0",
+        },
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert len(body["results"]) == 2  # only the 2 masters-granting seeded institutions
+    for result in body["results"]:
+        assert 0 <= result["match_score"] <= 100
+        assert "admission_probability" not in result
+        assert "location_fit" not in result["component_scores"]  # hard filter, not a score
+        assert result["component_scores"]["cost_fit"] is None  # no budget provided
+        # Regression for a real BLOCKING bug: ScoredInstitutionOut didn't
+        # declare is_comfortable_fit, so the field was silently dropped
+        # from the API response despite existing on the internal dataclass.
+        assert "is_comfortable_fit" in result
+
+
+def test_recommendations_preferred_states_hard_filters_out_other_states(client, seeded):
+    """UT Austin (TX) and Alabama A&M (AL) are both masters-granting in the
+    seeded fixture — restricting to TX must exclude Alabama A&M entirely,
+    not just deprioritize it."""
+    response = client.post(
+        "/recommendations",
+        json={
+            "degree_level": "masters",
+            "program_category": "general",
+            "program_name": "Public Administration",
+            "gpa": 3.2,
+            "gpa_scale": "scale_4_0",
+            "budget_max_usd": 30000,
+            "preferred_states": ["TX"],
+        },
+    )
+    assert response.status_code == 200
+    body = response.json()
+    unitids = {r["unitid"] for r in body["results"]}
+    assert unitids == {228778}
+
+
+def test_recommendations_rejects_missing_required_field(client, seeded):
+    response = client.post(
+        "/recommendations",
+        json={"degree_level": "masters", "program_category": "general", "gpa": 3.2},
+    )
+    assert response.status_code == 422
+
+
+def test_recommendations_rejects_degree_level_category_mismatch(client, seeded):
+    """Regression for a real MEDIUM finding: program_category=cs_phd
+    implies degree_level=doctoral, but nothing previously stopped a
+    request from claiming degree_level=masters at the same time."""
+    response = client.post(
+        "/recommendations",
+        json={
+            "degree_level": "masters",
+            "program_category": "cs_phd",
+            "program_name": "Computer Science",
+            "gpa": 3.6,
+            "gpa_scale": "scale_4_0",
+        },
+    )
+    assert response.status_code == 422
+
+
+def test_recommendations_rejects_unsupported_degree_level(client, seeded):
+    """Regression for a real MEDIUM finding: degree_level=certificate/other
+    reached _degree_level_eligible's unconditional True fallthrough with
+    zero institution-level filtering — even bachelor's-only colleges
+    would come back as "recommended." Only masters/doctoral have a real
+    filter implemented, so anything else is rejected at the API layer."""
+    response = client.post(
+        "/recommendations",
+        json={
+            "degree_level": "certificate",
+            "program_category": "general",
+            "program_name": "Data Science",
+            "gpa": 3.6,
+            "gpa_scale": "scale_4_0",
+        },
+    )
+    assert response.status_code == 422
+
+
+def test_recommendations_rejects_malformed_preferred_state(client, seeded):
+    """Regression for a real MEDIUM finding: a malformed entry (e.g. a
+    full state name instead of a 2-letter code) previously passed
+    validation, silently matched nothing in the hard geography filter,
+    and came back as a 200 with zero results — indistinguishable from
+    "no matches in that state." Reject it explicitly instead."""
+    response = client.post(
+        "/recommendations",
+        json={
+            "degree_level": "masters",
+            "program_category": "general",
+            "program_name": "Computer Science",
+            "gpa": 3.6,
+            "gpa_scale": "scale_4_0",
+            "preferred_states": ["Texas"],
+        },
+    )
+    assert response.status_code == 422
+
+
+def test_recommendations_non_4_0_gpa_scale_accepted_and_neutral(client, seeded):
+    """A GPA on a non-4.0 scale (e.g. 100-point) must be accepted, not
+    naively compared — see test_recommendation.py's scoring-level
+    regression test for the underlying bug this guards."""
+    response = client.post(
+        "/recommendations",
+        json={
+            "degree_level": "masters",
+            "program_category": "general",
+            "program_name": "Computer Science",
+            "gpa": 86,
+            "gpa_scale": "other",
+        },
+    )
+    assert response.status_code == 200
+    body = response.json()
+    for result in body["results"]:
+        assert result["component_scores"]["academic_fit"] == 60.0
+
+
+def test_recommendations_rejects_implausible_gpa_for_4_0_scale(client, seeded):
+    """Regression for a real MEDIUM finding: {"gpa": 95, "gpa_scale":
+    "scale_4_0"} previously passed validation and would have reproduced
+    the exact near-perfect-score bug the BLOCKING gpa_scale fix closed."""
+    response = client.post(
+        "/recommendations",
+        json={
+            "degree_level": "masters",
+            "program_category": "general",
+            "program_name": "Computer Science",
+            "gpa": 95,
+            "gpa_scale": "scale_4_0",
+        },
+    )
+    assert response.status_code == 422
+
+
+def test_cors_allows_post_for_recommendations(client):
+    response = client.options(
+        "/recommendations",
+        headers={
+            "Origin": "http://localhost:3000",
+            "Access-Control-Request-Method": "POST",
+        },
+    )
+    assert response.headers["access-control-allow-origin"] == "http://localhost:3000"

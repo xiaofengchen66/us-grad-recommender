@@ -4,6 +4,8 @@
 
 Build a U.S.-only graduate-school information and recommendation platform. It initially serves applicants from China, but the underlying schema must support applicants from India and other countries later.
 
+> **Amendment, 2026-09-11 (Phase 3 v1 scope, not a reversal of this section's goal):** the deliberate 10-program reach/target/safety portfolio below remains the product's long-term target. The first shipped recommendation engine (`docs/MAP_RECOMMENDER_DESIGN.md` §5, Phase 3.0) does **not** implement it yet — it ranks a top-20 shortlist and guarantees a minimum "comfortable-fit" floor (§5.9) instead of reach/target/safety quotas, admission-safety-vs-funding-safety-vs-financial-safety distinctions, or diversity/correlated-risk constraints. This was a deliberate, approved scope decision (map-first UX prioritized for v1; the fuller portfolio model needs real program/funding data — `admission_requirements` `FUNDING` rows, populated `ProgramTrack.estimated_annual_cost_usd` — that doesn't exist yet, per PR #16/#17), not an abandonment of this section. See `MAP_RECOMMENDER_DESIGN.md` §5.8/§5.9 for exactly what v1 does instead and why, and §14 there for what's explicitly deferred.
+
 The product is not merely a scholarship search engine, ranking list, or directory returning hundreds of results. Its core promise is:
 
 > Build a comprehensive U.S. master's-program database, then use official program data, recent admission/funding outcomes, and user preferences to recommend a deliberate portfolio of 10 programs.
@@ -66,6 +68,15 @@ China-specific fields must be optional enrichment, not hard-coded assumptions in
 ### Degree level
 
 - Master's first
+
+> **Amendment, 2026-09-11:** the Phase 3.0 recommendation engine
+> (`MAP_RECOMMENDER_DESIGN.md` §9.1) also ships `DegreeLevel.DOCTORAL`
+> as a fully supported, validated, tested request path — 4 of its 6
+> deep-coverage `ProgramCategory` values (JD, MD, DDS/DMD, CS PhD) are
+> doctoral-only credentials with no master's equivalent, so doctoral
+> support wasn't optional for those categories to make sense at all.
+> Master's remains the primary/default focus; doctoral is real,
+> shipped scope, not a placeholder.
 
 ### Initial disciplines
 
@@ -317,6 +328,15 @@ Funding categories:
 ---
 
 ## 8. Recommendation Portfolio
+
+> **Not yet implemented as of Phase 3.0 — see the amendment in §1.** The
+> shipped v1 engine (`recommendation.py`) does a ranked top-20 shortlist
+> with a comfortable-fit floor (`MAP_RECOMMENDER_DESIGN.md` §5.9), not
+> this section's reach/target/safety quota model, admission/funding/
+> financial safety distinction, or portfolio-optimization constraints
+> (diversity, anti-correlation, "no allowlist"). This section still
+> describes the intended eventual behavior; it is not superseded, just
+> not yet built.
 
 ### Default structure
 
