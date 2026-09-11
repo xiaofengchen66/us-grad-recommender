@@ -20,6 +20,8 @@ from us_grad_recommender.recommendation import (
     ProgramCategory,
     RecommendationCategory,
     RecommendationProfile,
+    ScoredInstitution,
+    _apply_comfortable_fit_floor,
     _load_catalog_by_unitid,
     recommend,
     score_university,
@@ -852,6 +854,42 @@ def test_comfortable_fit_floor_backfills_when_naturally_absent(db_session):
     # the established (-match_score, unitid) tie-break convention, and
     # must never be the one displaced by the floor's backfill.
     assert results[0].unitid == 980000
+
+
+def _bare_scored(unitid: int, match_score: int, is_comfortable_fit: bool) -> ScoredInstitution:
+    """Minimal ScoredInstitution for unit-testing _apply_comfortable_fit_floor
+    directly, without a DB round trip — only the fields that function
+    actually reads need real values."""
+    return ScoredInstitution(
+        unitid=unitid,
+        program_id=None,
+        match_score=match_score,
+        data_confidence=DataConfidence.MEDIUM,
+        program_availability=ProgramAvailability.UNKNOWN,
+        component_scores={},
+        is_comfortable_fit=is_comfortable_fit,
+    )
+
+
+def test_comfortable_fit_floor_structurally_never_touches_rank_1():
+    """Hardening for the same bug class this PR's history already fixed
+    twice (round 4's outer-ranking tie-break, round 7's floor tie-break):
+    rank 1 (index 0 of the already-sorted naive top) must never be
+    displaceable at all, not just correctly ordered last among
+    candidates — verified here with limit == MIN_COMFORTABLE_FIT_COUNT,
+    an adversarial ratio where relying on "TOP_N is much bigger than the
+    floor count" would not by itself guarantee rank 1 survives."""
+    scored = [
+        _bare_scored(1, match_score=90, is_comfortable_fit=False),  # rank 1
+        _bare_scored(2, match_score=90, is_comfortable_fit=False),
+        _bare_scored(3, match_score=90, is_comfortable_fit=False),
+        _bare_scored(4, match_score=50, is_comfortable_fit=True),
+        _bare_scored(5, match_score=40, is_comfortable_fit=True),
+    ]
+
+    result = _apply_comfortable_fit_floor(scored, limit=3)
+
+    assert 1 in {s.unitid for s in result}
 
 
 def test_comfortable_fit_floor_no_op_when_already_satisfied(db_session):

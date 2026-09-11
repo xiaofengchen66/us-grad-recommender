@@ -69,6 +69,15 @@ China-specific fields must be optional enrichment, not hard-coded assumptions in
 
 - Master's first
 
+> **Amendment, 2026-09-11:** the Phase 3.0 recommendation engine
+> (`MAP_RECOMMENDER_DESIGN.md` §9.1) also ships `DegreeLevel.DOCTORAL`
+> as a fully supported, validated, tested request path — 4 of its 6
+> deep-coverage `ProgramCategory` values (JD, MD, DDS/DMD, CS PhD) are
+> doctoral-only credentials with no master's equivalent, so doctoral
+> support wasn't optional for those categories to make sense at all.
+> Master's remains the primary/default focus; doctoral is real,
+> shipped scope, not a placeholder.
+
 ### Initial disciplines
 
 - Computer Science
