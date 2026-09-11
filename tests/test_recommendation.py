@@ -368,6 +368,63 @@ def test_raw_min_gpa_falls_back_neutrally_not_scored_as_trustworthy(db_session):
     assert result.is_comfortable_fit is False
 
 
+def test_raw_program_confirmation_does_not_inflate_confidence(db_session):
+    """Regression for a real HIGH finding: _score_program_fit hardcoded
+    verified=True for every CONFIRMED match regardless of the matched
+    Program row's actual verification_status, inflating data_confidence
+    for a program sourced from a RAW/unreviewed adapter extraction as if
+    it were human-confirmed. Same bug class already fixed for
+    academic_fit/cost_fit (see the RAW-min_gpa test above), extended
+    here to program_fit. Two otherwise-identical universities differing
+    only in Program.verification_status must land in different
+    data_confidence buckets."""
+    verified_uid, raw_uid = 910021, 910022
+    for uid, program_status in [
+        (verified_uid, VerificationStatus.DOCUMENT_VERIFIED),
+        (raw_uid, VerificationStatus.RAW),
+    ]:
+        university = make_university(uid)
+        db_session.add(university)
+        db_session.flush()
+        unit = make_academic_unit(uid)
+        degree_type = make_degree_type(code=f"MS-{uid}")
+        program = Program(
+            academic_unit=unit,
+            degree_type=degree_type,
+            raw_degree_name="M.S.",
+            canonical_name="Computer Science",
+            status=EntityStatus.ACTIVE,
+            verification_status=program_status,
+            last_verified_at=TODAY,
+        )
+        track = ProgramTrack(
+            program=program,
+            track_name="Thesis",
+            min_gpa=2.5,
+            verification_status=VerificationStatus.DOCUMENT_VERIFIED,
+            last_verified_at=TODAY,
+        )
+        db_session.add_all([unit, degree_type, program, track])
+    db_session.commit()
+
+    catalog = _load_catalog_by_unitid(db_session)
+    verified_result = score_university(
+        catalog, db_session.get(University, verified_uid), base_profile()
+    )
+    raw_result = score_university(catalog, db_session.get(University, raw_uid), base_profile())
+
+    assert verified_result.program_availability == ProgramAvailability.CONFIRMED
+    assert raw_result.program_availability == ProgramAvailability.CONFIRMED
+    # Same program_fit *value* either way (both CONFIRMED)...
+    assert (
+        verified_result.component_scores["program_fit"]
+        == raw_result.component_scores["program_fit"]
+    )
+    # ...but the RAW-sourced one must not claim the same confidence.
+    assert verified_result.data_confidence == DataConfidence.HIGH
+    assert raw_result.data_confidence != DataConfidence.HIGH
+
+
 def test_carnegie_not_applicable_sentinel_treated_as_unknown(db_session):
     """IPEDS uses -2 for 'not in the Carnegie universe' (real, ~95 rows in
     the dev DB) — this must fall back neutrally like a missing value, not

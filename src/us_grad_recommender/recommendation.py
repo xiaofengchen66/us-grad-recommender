@@ -324,6 +324,7 @@ class ScoredInstitution:
 class _ProgramMatch:
     availability: ProgramAvailability
     program_id: Optional[int]
+    program_verified: bool  # Program.verification_status, for program_fit's ComponentScore
     min_gpa: Optional[float]
     min_gpa_verified: bool
     min_gpa_strictly_verified: bool
@@ -419,7 +420,14 @@ def _score_program_fit(match: _ProgramMatch) -> ComponentScore:
     # must score above UNKNOWN's "we have nothing on file" neutral
     # fallback (_NEUTRAL_FALLBACK), not below it.
     if match.availability == ProgramAvailability.CONFIRMED:
-        return ComponentScore(85.0, verified=True)
+        # verified reflects the matched Program row's own
+        # verification_status (§5.6), not a blanket True — a CONFIRMED
+        # match sourced from a RAW/NEEDS_REVIEW row (PHASE_2_CATALOG_DESIGN.md
+        # §10: "nothing is presented to end users as fully trusted until a
+        # human confirms it") must not inflate data_confidence as if it
+        # were reviewed. Same bug class already fixed for academic_fit/
+        # cost_fit, extended here.
+        return ComponentScore(85.0, verified=match.program_verified)
     if match.availability == ProgramAvailability.PARTIAL:
         return ComponentScore(_NEUTRAL_FALLBACK + 10.0, verified=False)
     return ComponentScore(_NEUTRAL_FALLBACK, verified=False)
@@ -529,6 +537,7 @@ class _CatalogRow:
     program_canonical_name: str
     program_id: int
     degree_level: DegreeLevel
+    program_verified: bool  # Program.verification_status in _VERIFIED_STATUSES
     min_gpa: Optional[float]
     min_gpa_verified: bool
     min_gpa_strictly_verified: bool  # §5.9's comfortable-fit floor bar
@@ -595,6 +604,7 @@ def _load_catalog_by_unitid(session: Session) -> dict[int, list[_CatalogRow]]:
                 program_canonical_name=program.canonical_name,
                 program_id=program.id,
                 degree_level=degree_type.level,
+                program_verified=program.verification_status in _VERIFIED_STATUSES,
                 min_gpa=(
                     float(track.min_gpa)
                     if track is not None and track.min_gpa is not None
@@ -626,6 +636,7 @@ def _load_catalog_by_unitid(session: Session) -> dict[int, list[_CatalogRow]]:
                     program_canonical_name="",
                     program_id=-1,
                     degree_level=DegreeLevel.OTHER,
+                    program_verified=False,
                     min_gpa=None,
                     min_gpa_verified=False,
                     min_gpa_strictly_verified=False,
@@ -651,7 +662,7 @@ def _match_program(
     rows = catalog_by_unitid.get(unitid)
     if not rows:
         return _ProgramMatch(
-            ProgramAvailability.UNKNOWN, None, None, False, False, None, False
+            ProgramAvailability.UNKNOWN, None, False, None, False, False, None, False
         )
 
     # Deep-coverage categories imply a fixed level (§9.1, already
@@ -679,6 +690,7 @@ def _match_program(
         return _ProgramMatch(
             availability=ProgramAvailability.CONFIRMED,
             program_id=row.program_id,
+            program_verified=row.program_verified,
             min_gpa=row.min_gpa,
             min_gpa_verified=row.min_gpa_verified,
             min_gpa_strictly_verified=row.min_gpa_strictly_verified,
@@ -695,9 +707,11 @@ def _match_program(
     )
     if related:
         return _ProgramMatch(
-            ProgramAvailability.PARTIAL, None, None, False, False, None, False
+            ProgramAvailability.PARTIAL, None, False, None, False, False, None, False
         )
-    return _ProgramMatch(ProgramAvailability.UNKNOWN, None, None, False, False, None, False)
+    return _ProgramMatch(
+        ProgramAvailability.UNKNOWN, None, False, None, False, False, None, False
+    )
 
 
 def score_university(
