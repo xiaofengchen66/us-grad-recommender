@@ -868,6 +868,14 @@ v1; baseline map is the full IPEDS universe, not R1/R2-restricted.
 
 ## 14. Explicitly deferred scope
 
+- Minor follow-ups noted during PR #17 review, non-blocking (correctness
+  unaffected either way): `ScoredInstitutionOut.rank`'s `le=20` bound
+  (api/schemas.py) is a duplicated literal of `recommendation.TOP_N`
+  rather than deriving from it — would silently drift if `TOP_N` is ever
+  changed without a matching schema edit; and §6.3 below lists
+  `GET /programs/{id}/links` as if it were Phase 3.0 scope, while §16's
+  phase breakdown (accurately) doesn't include it — wording only, worth
+  tightening later.
 - ML-based scoring (v1 is deterministic, per explicit instruction).
 - Persisted recommendation history / saved searches / accounts.
 - Raw weight-slider priority customization (v1 ships presets only).

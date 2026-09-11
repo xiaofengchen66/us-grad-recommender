@@ -819,6 +819,12 @@ def test_comfortable_fit_floor_backfills_when_naturally_absent(db_session):
     # so the floor can only backfill up to what actually exists — it
     # should include exactly that one, not fabricate more.
     assert len([r for r in results if r.is_comfortable_fit]) == 1
+    # Regression for a real HIGH finding: all 20 distractors are tied on
+    # match_score (the realistic condition with today's sparse data) —
+    # unitid=980000 is the best-ranked (rank 1) among that tied block per
+    # the established (-match_score, unitid) tie-break convention, and
+    # must never be the one displaced by the floor's backfill.
+    assert results[0].unitid == 980000
 
 
 def test_comfortable_fit_floor_no_op_when_already_satisfied(db_session):

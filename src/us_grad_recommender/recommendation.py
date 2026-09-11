@@ -827,8 +827,20 @@ def _apply_comfortable_fit_floor(
         s for s in scored if s.unitid not in top_unitids and s.is_comfortable_fit
     ]
     # Worst-ranked non-comfortable entries in `top` are displaced first —
-    # rank 1 is never bumped for this.
-    displaceable = sorted((s for s in top if not s.is_comfortable_fit), key=lambda s: s.match_score)
+    # rank 1 is never bumped for this. Tie-break matters here: `top`'s own
+    # ordering (and this function's job of removing the *worst* tied
+    # entry) uses (-match_score, unitid) ascending, i.e. among equal
+    # scores the smaller unitid ranks better — so the worst of a tied
+    # group has the *largest* unitid. Sorting by match_score alone (no
+    # secondary key) is a stable sort that would instead put the
+    # *best*-ranked tied entry first, since it preserves `top`'s existing
+    # best-to-worst order — meaning with today's data (many ties, per the
+    # comment above), rank 1 could get silently displaced instead. Match
+    # the outer sort's own tie-break convention, inverted for "worst
+    # first": (match_score, -unitid).
+    displaceable = sorted(
+        (s for s in top if not s.is_comfortable_fit), key=lambda s: (s.match_score, -s.unitid)
+    )
 
     result = list(top)
     for candidate in backfill_candidates:
