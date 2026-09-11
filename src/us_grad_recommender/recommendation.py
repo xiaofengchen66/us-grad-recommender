@@ -229,6 +229,20 @@ _STRICT_VERIFIED_STATUSES = frozenset(
     {VerificationStatus.USER_CONFIRMED, VerificationStatus.DOCUMENT_VERIFIED}
 )
 
+# Excludes only DISCONTINUED/PAUSED, not "not yet ACTIVE": a DISCONTINUED
+# or PAUSED AcademicUnit/Program/ProgramTrack (PHASE_2_CATALOG_DESIGN.md
+# §6/§12 — the real lifecycle state for something that repeatedly 404s on
+# re-crawl) must never feed a CONFIRMED or PARTIAL match. UNVERIFIED is
+# deliberately still included — per EntityStatus's own docstring
+# (models/common.py) it means "we haven't checked whether this still
+# exists," not "known gone," and it's the realistic default status for
+# most real (and fixture) rows today. Requiring exactly ACTIVE would
+# silently exclude nearly everything. Shared by all three entity types in
+# _load_catalog_by_unitid so a closed department can't leak into the
+# PARTIAL fallback any more than a discontinued program can leak into
+# CONFIRMED.
+_EXCLUDED_ENTITY_STATUSES = (EntityStatus.DISCONTINUED, EntityStatus.PAUSED)
+
 _PRESET_WEIGHTS: dict[PriorityPreset, dict[str, float]] = {
     PriorityPreset.RANKING: {
         "academic_fit": 1.0,
@@ -553,8 +567,15 @@ def _load_catalog_by_unitid(session: Session) -> dict[int, list[_CatalogRow]]:
     any) and the right shape to keep cheap as coverage grows, since it's a
     single indexed join rather than N+1.
     """
+    # A DISCONTINUED/PAUSED AcademicUnit (e.g. a closed department) must
+    # not feed the PARTIAL "{program}-related department found" fallback
+    # (_match_program below) — same reasoning, and same excluded-status
+    # set, as the Program/ProgramTrack filter a few lines down. Hoisted
+    # to module level so both queries share one definition.
     unit_rows = session.execute(
-        select(AcademicUnit.id, AcademicUnit.unitid, AcademicUnit.name)
+        select(AcademicUnit.id, AcademicUnit.unitid, AcademicUnit.name).where(
+            AcademicUnit.status.not_in(_EXCLUDED_ENTITY_STATUSES)
+        )
     ).all()
     unit_name_by_id = {r.id: r.name for r in unit_rows}
     units_by_unitid: dict[int, list[int]] = {}
@@ -568,23 +589,10 @@ def _load_catalog_by_unitid(session: Session) -> dict[int, list[_CatalogRow]]:
     # unspecified, contradicting §5.1's "100% deterministic" requirement.
     # v1 deliberately picks the lowest-id (first-created) track
     # consistently rather than implementing per-track selection logic.
-    #
-    # Excludes only DISCONTINUED/PAUSED, not "not yet ACTIVE": a
-    # DISCONTINUED or PAUSED program (PHASE_2_CATALOG_DESIGN.md §6/§12 —
-    # the real lifecycle state for a program that repeatedly 404s on
-    # re-crawl) must never be recommended as CONFIRMED. UNVERIFIED is
-    # deliberately still included — per EntityStatus's own docstring
-    # (models/common.py) it means "we haven't checked whether this still
-    # exists," not "known gone," and it's the realistic default status
-    # for most real (and fixture) rows today, matching the established
-    # convention elsewhere in this codebase (e.g. test_catalog_models.py's
-    # own base_chain fixture leaves tracks at their UNVERIFIED default
-    # and asserts that's correct). Requiring exactly ACTIVE would have
-    # silently excluded nearly everything. ProgramTrack gets the same
-    # exclusion in the join's ON clause, not WHERE, so a Program with
-    # only excluded tracks still comes through (as if it had no track
-    # data at all, falling back neutrally) rather than disappearing.
-    _EXCLUDED_ENTITY_STATUSES = (EntityStatus.DISCONTINUED, EntityStatus.PAUSED)
+    # ProgramTrack's status exclusion is in the join's ON clause, not
+    # WHERE, so a Program with only excluded tracks still comes through
+    # (as if it had no track data at all, falling back neutrally) rather
+    # than disappearing.
     program_rows = session.execute(
         select(Program, ProgramTrack, DegreeType)
         .join(DegreeType, Program.degree_type_code == DegreeType.code)

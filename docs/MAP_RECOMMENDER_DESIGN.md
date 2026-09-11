@@ -875,7 +875,14 @@ v1; baseline map is the full IPEDS universe, not R1/R2-restricted.
   changed without a matching schema edit; and §6.3 below lists
   `GET /programs/{id}/links` as if it were Phase 3.0 scope, while §16's
   phase breakdown (accurately) doesn't include it — wording only, worth
-  tightening later.
+  tightening later; `preferred_states`'s validator (api/schemas.py)
+  only checks "2 letters, alphabetic," not membership in a real US
+  state/territory list — a value like `"ZZ"` passes and produces the
+  same zero-result response as a legitimately state-with-no-matches
+  query, which is benign (not misleading — the user sees "no results,"
+  same as they would for any empty search) but not as precise as it
+  could be. A real state-code allowlist is easy to add later if it
+  turns out to matter in practice.
 - ML-based scoring (v1 is deterministic, per explicit instruction).
 - Persisted recommendation history / saved searches / accounts.
 - Raw weight-slider priority customization (v1 ships presets only).

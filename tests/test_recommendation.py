@@ -241,6 +241,33 @@ def test_partial_availability_when_unit_exists_but_no_program(db_session):
     assert result.program_id is None
 
 
+def test_discontinued_academic_unit_does_not_yield_partial(db_session):
+    """Regression for a real MEDIUM finding: the AcademicUnit query had
+    no status filter, unlike the Program/ProgramTrack query a few lines
+    later which already excludes DISCONTINUED/PAUSED — so a closed
+    department could still produce PARTIAL and a "program not yet
+    confirmed" reason, an institution fact (the unit no longer operates)
+    leaking into a program-availability signal presented as current."""
+    unitid = 910023
+    university = make_university(unitid)
+    db_session.add(university)
+    db_session.flush()
+    unit = AcademicUnit(
+        unitid=unitid,
+        unit_type=UnitType.DEPARTMENT,
+        name="School of Computer Science and Engineering",
+        status=EntityStatus.DISCONTINUED,
+        last_verified_at=TODAY,
+    )
+    db_session.add(unit)
+    db_session.commit()
+
+    catalog = _load_catalog_by_unitid(db_session)
+    result = score_university(catalog, university, base_profile())
+
+    assert result.program_availability == ProgramAvailability.UNKNOWN
+
+
 def test_partial_scores_higher_than_unknown_for_program_fit(db_session):
     """Regression for a real BLOCKING bug: PARTIAL previously scored 55
     while UNKNOWN's neutral fallback was 60 — the exact inverse of the
